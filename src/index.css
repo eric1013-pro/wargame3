@@ -1,0 +1,674 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-void: #07080a;
+    --bg-carbon: rgba(11, 12, 15, 0.92);
+    --bg-panel: rgba(14, 15, 19, 0.96);
+    --bg-elevated: rgba(22, 24, 30, 0.98);
+    --line-subtle: rgba(255, 255, 255, 0.09);
+    --line-strong: rgba(255, 255, 255, 0.22);
+    --ink-bone: #f4f4f0;
+    --ink-secondary: #c8ccd4;
+    --ink-muted: #7c828f;
+    --signal: #ff4422;
+    --signal-bright: #ff6242;
+    --cyan: #38d9ff;
+    --mint: #2ee6a6;
+    --amber: #f5b342;
+    --ease-sharp: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  * {
+    box-sizing: border-box;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-color: var(--bg-void);
+    color: var(--ink-bone);
+    font-family: 'Noto Sans KR', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+}
+
+/* ==========================================================================
+   TYPOGRAPHY SYSTEM — BARLOW CONDENSED + NOTO SANS KR + JETBRAINS MONO
+   ========================================================================== */
+.font-display,
+.font-stencil {
+  font-family: 'Barlow Condensed', 'Noto Sans KR', sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+
+.font-tactical {
+  font-family: 'JetBrains Mono', 'Noto Sans KR', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Crisp legibility shadow for frameless HUD text floating directly over live 3D */
+.game-text-outline {
+  text-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.92),
+    0 2px 14px rgba(0, 0, 0, 0.72);
+}
+
+/* ==========================================================================
+   SUBTLE CINEMATIC VIGNETTE & CARBON BACKDROPS (Zero backdrop-filter over WebGL)
+   ========================================================================== */
+.cinema-film-grain {
+  background-image: radial-gradient(
+    ellipse at 50% 48%,
+    transparent 52%,
+    rgba(4, 5, 7, 0.32) 84%,
+    rgba(3, 4, 6, 0.7) 100%
+  );
+}
+
+.modal-ambient-backdrop {
+  background:
+    radial-gradient(ellipse 64% 48% at 50% 18%, rgba(255, 68, 34, 0.065) 0%, transparent 66%),
+    radial-gradient(circle at 50% 50%, rgba(7, 8, 10, 0.84) 0%, rgba(4, 5, 7, 0.96) 100%);
+}
+
+/* ==========================================================================
+   ARCHITECTURAL SURFACES — RAZOR-SHARP CARBON PANELS & CORNER BRACKETS
+   ========================================================================== */
+.tac-panel,
+.game-plaque {
+  position: relative;
+  background: linear-gradient(180deg, rgba(16, 17, 21, 0.96) 0%, rgba(10, 11, 14, 0.985) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 2px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 28px 64px -16px rgba(0, 0, 0, 0.88);
+}
+
+/* Micro 6px architectural corner registration marks on major modals */
+.tac-corners::before,
+.tac-corners::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.tac-corners::before {
+  top: -1px;
+  left: -1px;
+  border-top: 2px solid var(--signal);
+  border-left: 2px solid var(--signal);
+}
+
+.tac-corners::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 2px solid rgba(255, 255, 255, 0.55);
+  border-right: 2px solid rgba(255, 255, 255, 0.55);
+}
+
+/* Chamfered bottom-right cut for primary AAA action surfaces */
+.tac-chamfer {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%);
+}
+
+/* Whisper-subtle frameless HUD corner scrims (NO opaque rectangular card walls) */
+.hud-fade-tl {
+  background: linear-gradient(135deg, rgba(7, 8, 10, 0.76) 0%, rgba(7, 8, 10, 0.34) 68%, transparent 100%);
+}
+
+.hud-fade-tc {
+  background: linear-gradient(180deg, rgba(7, 8, 10, 0.78) 0%, rgba(7, 8, 10, 0.42) 72%, transparent 100%);
+}
+
+.hud-fade-bl {
+  background: linear-gradient(45deg, rgba(7, 8, 10, 0.82) 0%, rgba(7, 8, 10, 0.36) 66%, transparent 100%);
+}
+
+.hud-fade-br {
+  background: linear-gradient(315deg, rgba(7, 8, 10, 0.86) 0%, rgba(7, 8, 10, 0.46) 72%, transparent 100%);
+}
+
+/* Minimalist radar housing */
+.radar-optical-frame {
+  position: relative;
+  background: rgba(9, 10, 13, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 2px;
+  box-shadow: 0 14px 32px -12px rgba(0, 0, 0, 0.82);
+}
+
+.radar-optical-screen {
+  background: #06070a;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Interactive flat architectural list card */
+.tactical-card {
+  position: relative;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 2px;
+  transition:
+    background-color 180ms var(--ease-sharp),
+    border-color 180ms var(--ease-sharp),
+    transform 180ms var(--ease-sharp);
+}
+
+.tactical-card:hover {
+  background: rgba(255, 255, 255, 0.048);
+  border-color: rgba(255, 68, 34, 0.55);
+  transform: translateY(-1px);
+}
+
+/* ==========================================================================
+   SWISS TACTICAL BRUTALISM BUTTON SYSTEM (Zero Plastic Gradients)
+   Primary: Stark Bone White -> Signal Vermilion kinetic sweep on hover
+   Secondary: Carbon Matte + 1px Crisp Hairline -> Bright Border + Subtle Lift
+   Danger: Solid Signal Vermilion
+   Ghost: Ultra-clean Frameless Tactical Control
+   ========================================================================== */
+.game-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 2px;
+  border: 1px solid transparent;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  cursor: pointer;
+  overflow: hidden;
+  transition:
+    transform 160ms var(--ease-sharp),
+    background-color 180ms var(--ease-sharp),
+    border-color 180ms var(--ease-sharp),
+    color 160ms var(--ease-sharp),
+    opacity 160ms ease;
+}
+
+.game-btn:active:not(:disabled) {
+  transform: scale(0.982);
+  transition-duration: 70ms;
+}
+
+.game-btn:disabled {
+  opacity: 0.36;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+.game-btn:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+
+/* PRIMARY — Stark Titanium White with Chamfered Cut & Kinetic Vermilion Sweep */
+.game-btn-primary,
+.game-btn-amber {
+  background-color: var(--ink-bone);
+  color: #07080a;
+  border-color: var(--ink-bone);
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%);
+}
+
+.game-btn-primary::before,
+.game-btn-amber::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-color: var(--signal);
+  transform: translateX(-102%);
+  transition: transform 220ms var(--ease-sharp);
+  z-index: 0;
+}
+
+.game-btn-primary:hover:not(:disabled),
+.game-btn-amber:hover:not(:disabled) {
+  color: #ffffff;
+  border-color: var(--signal);
+}
+
+.game-btn-primary:hover:not(:disabled)::before,
+.game-btn-amber:hover:not(:disabled)::before {
+  transform: translateX(0);
+}
+
+/* SECONDARY — Crisp Architectural Carbon with 1px Hairline */
+.game-btn-secondary,
+.game-btn-steel {
+  background-color: rgba(16, 18, 22, 0.88);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: var(--ink-bone);
+}
+
+.game-btn-secondary:hover:not(:disabled),
+.game-btn-steel:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.09);
+  border-color: rgba(255, 255, 255, 0.52);
+  color: #ffffff;
+}
+
+/* DANGER — Solid High-Vis Signal Vermilion */
+.game-btn-danger,
+.game-btn-crimson {
+  background-color: var(--signal);
+  border-color: var(--signal);
+  color: #ffffff;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 9px), calc(100% - 9px) 100%, 0 100%);
+}
+
+.game-btn-danger:hover:not(:disabled),
+.game-btn-crimson:hover:not(:disabled) {
+  background-color: var(--signal-bright);
+  border-color: var(--signal-bright);
+}
+
+/* EMERALD / VATS */
+.game-btn-emerald {
+  background-color: rgba(46, 230, 166, 0.14);
+  border-color: rgba(46, 230, 166, 0.45);
+  color: #a7f3d0;
+}
+
+.game-btn-emerald:hover:not(:disabled) {
+  background-color: rgba(46, 230, 166, 0.24);
+  border-color: rgba(46, 230, 166, 0.8);
+}
+
+/* GHOST — Minimal Utility Icon/Text Trigger */
+.game-btn-ghost {
+  background-color: rgba(10, 11, 14, 0.62);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #c8ccd4;
+}
+
+.game-btn-ghost:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.34);
+  color: #ffffff;
+}
+
+/* Selected / Active state */
+.game-btn-selected {
+  background-color: rgba(255, 68, 34, 0.18) !important;
+  border-color: rgba(255, 68, 34, 0.78) !important;
+  color: #ffffff !important;
+}
+
+/* ==========================================================================
+   ARCHITECTURAL SEGMENTED CONTROL & TACTICAL ROCKER SWITCH (Zero Bubbly Pills)
+   ========================================================================== */
+.segmented-track {
+  position: relative;
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  padding: 2px;
+  border-radius: 2px;
+  background: rgba(6, 7, 10, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.segmented-thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  border-radius: 1px;
+  background: var(--ink-bone);
+  transition: transform 200ms var(--ease-sharp);
+  pointer-events: none;
+}
+
+.segmented-item {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  height: 26px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: color 180ms var(--ease-sharp);
+  white-space: nowrap;
+}
+
+.segmented-item:hover {
+  color: var(--ink-bone);
+}
+
+.segmented-item[data-active='true'] {
+  color: #07080a;
+}
+
+/* Sharp Architectural Tactical Switch */
+.tactical-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 42px;
+  height: 22px;
+  padding: 2px;
+  border-radius: 2px;
+  background: rgba(6, 7, 10, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  cursor: pointer;
+  transition:
+    background-color 180ms var(--ease-sharp),
+    border-color 180ms var(--ease-sharp);
+}
+
+.tactical-switch[data-checked='true'] {
+  background: rgba(255, 68, 34, 0.24);
+  border-color: var(--signal);
+}
+
+.tactical-switch-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 1px;
+  background: #6c7280;
+  transform: translateX(0);
+  transition:
+    transform 180ms var(--ease-sharp),
+    background-color 180ms var(--ease-sharp);
+}
+
+.tactical-switch[data-checked='true'] .tactical-switch-thumb {
+  transform: translateX(20px);
+  background: var(--signal);
+}
+
+/* ==========================================================================
+   PRECISION TELEMETRY TRACKS, AMMO GAUGE & SLIDERS
+   ========================================================================== */
+.game-bar-track {
+  position: relative;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 1px;
+  overflow: hidden;
+}
+
+.ammo-dial-well {
+  background: rgba(7, 8, 10, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.ammo-gauge-well {
+  position: relative;
+  background: rgba(7, 8, 10, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1px;
+}
+
+.ammo-cell-slot {
+  position: relative;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+@keyframes ammoLowPulse {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-ammo-low {
+  animation: ammoLowPulse 0.95s ease-in-out infinite;
+}
+
+@keyframes tacticalSheen {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(230%);
+  }
+}
+
+.tactical-reload-sheen::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 44%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
+  animation: tacticalSheen 620ms var(--ease-sharp) infinite;
+  pointer-events: none;
+}
+
+/* Crisp Minimalist Range Slider */
+input[type='range'].tactical-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.16);
+  outline: none;
+}
+
+input[type='range'].tactical-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 16px;
+  border-radius: 1px;
+  background: var(--ink-bone);
+  border: 1px solid #07080a;
+  cursor: pointer;
+  transition: transform 140ms var(--ease-sharp), background-color 140ms ease;
+}
+
+input[type='range'].tactical-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.12);
+  background: var(--signal);
+}
+
+/* ==========================================================================
+   60FPS COMPOSITOR-ONLY ANIMATIONS
+   ========================================================================== */
+@keyframes killfeedSlide {
+  from {
+    opacity: 0;
+    transform: translate3d(12px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.animate-kf-slide {
+  animation: killfeedSlide 180ms var(--ease-sharp) forwards;
+}
+
+@keyframes commsEnter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.animate-comms-enter {
+  animation: commsEnter 200ms var(--ease-sharp) forwards;
+}
+
+@keyframes panelFadeUp {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.animate-panel-in {
+  animation: panelFadeUp 200ms var(--ease-sharp) forwards;
+}
+
+@keyframes drawerSlideIn {
+  from {
+    opacity: 0;
+    transform: translate3d(18px, 0, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.animate-drawer-in {
+  animation: drawerSlideIn 220ms var(--ease-sharp) forwards;
+}
+
+@keyframes alertBannerFlash {
+  0%,
+  100% {
+    border-color: rgba(255, 68, 34, 0.85);
+    background-color: rgba(140, 22, 16, 0.92);
+  }
+  50% {
+    border-color: rgba(255, 255, 255, 0.45);
+    background-color: rgba(88, 14, 12, 0.92);
+  }
+}
+
+.animate-alert-banner {
+  animation: alertBannerFlash 820ms ease-in-out infinite;
+}
+
+@keyframes spinSlow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes spinReverse {
+  from {
+    transform: rotate(360deg);
+  }
+  to {
+    transform: rotate(0deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spinSlow 24s linear infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.animate-spin-rev {
+  animation: spinReverse 16s linear infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.visor-scanlines {
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(56, 217, 255, 0.035) 0px,
+    rgba(56, 217, 255, 0.035) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+}
+
+@keyframes cassetteSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-cassette-spin {
+  animation: cassetteSpin 2.2s linear infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+@keyframes glitchRgbFlicker {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  25% {
+    transform: translate3d(-3px, 1px, 0);
+  }
+  55% {
+    transform: translate3d(3px, -1px, 0);
+  }
+}
+
+.animate-glitch-rgb {
+  animation: glitchRgbFlicker 140ms steps(2, end) infinite;
+}
+
+@keyframes creditsReveal {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 16px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.animate-credits-in {
+  animation: creditsReveal 620ms var(--ease-sharp) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-kf-slide,
+  .animate-comms-enter,
+  .animate-alert-banner,
+  .animate-panel-in,
+  .animate-drawer-in,
+  .animate-spin-slow,
+  .animate-spin-rev,
+  .animate-cassette-spin,
+  .animate-glitch-rgb,
+  .animate-credits-in,
+  .animate-ammo-low,
+  .tactical-reload-sheen::before {
+    animation: none;
+  }
+}
