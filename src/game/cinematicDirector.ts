@@ -3,6 +3,7 @@ import {
   CinematicHudState,
   CinematicSequenceId,
   CommsSender,
+  EndingId,
   RadioTransmission,
 } from './types';
 
@@ -27,6 +28,7 @@ export interface SubtitleCue {
   speaker: string;
   role: string;
   sender: CommsSender;
+  callsignCode?: string;
   accentCss: string;
   text: string;
   duration: number;
@@ -39,8 +41,10 @@ export interface CinematicEventCallbacks {
   onBraaam?: () => void;
   onTypewriterTick?: () => void;
   onCommsCue?: (sender: CommsSender) => void;
+  onTitanImpact?: (pos: Vec3Like) => void;
   onBreachDomeShatter?: () => void;
   onDawnBlackoutImpact?: () => void;
+  onEndingImpact?: (ending: EndingId) => void;
   onSequenceComplete?: (sequence: CinematicSequenceId) => void;
   onSpeakSubtitle?: (cue: SubtitleCue) => void;
 }
@@ -88,17 +92,28 @@ export function createInitialCinematicState(): CinematicHudState {
     emergencyRedOpacity: 0,
     chapterCard: null,
     dawnProgress: 0,
+    endingTheme: null,
   };
 }
 
+const DEFAULT_CALLSIGNS: Record<CommsSender, string> = {
+  exo: 'ECHO-IV',
+  valkyrie: 'VALK-01',
+  ghost9: 'GHST-9',
+  arcadia: 'OMNI-00',
+  holotape: 'ARCHIVE',
+  squad: 'ALPHA-1',
+  gunship: 'ANGEL-01',
+};
+
 /**
- * Independent AAA Cinematic Director managing:
- * - 2.39:1 Letterbox state & HUD hiding
- * - Real-time 3D Camera Rail / Target Pan interpolation (Opening, Breach, Dawn)
+ * AAA Cinematic Director V3 managing:
+ * - 2.39:1 Letterbox state & HUD choreography
+ * - 6 Real-Time 3D Camera Rail Sequences (Opening, Titan Drop, Breach, Zero Hour Choice, Dawn, Symbiosis, Ascension)
  * - Call of Duty–style Chapter Title Cards with typewriter tick emission
- * - Non-blocking Sequential Movie Subtitle & Holotape Audio Log Queue
- * - Screen FX timers (Blackout, Whiteout, Visor Boot, RGB Glitch, Emergency Strobe, Dawn Morph)
- * - Player Invulnerability & instant [SPACE] Skip
+ * - Multi-character Movie Subtitle & Holotape Audio Log Queue
+ * - Screen FX timers (Blackout, Whiteout, Visor Boot, RGB Glitch, Emergency Strobe, Ending Sky Morph)
+ * - Player Invulnerability & instant [SPACE] Skip (disabled only on interactive Zero Hour Choice)
  */
 export class CinematicDirector {
   private sequence: CinematicSequenceId = 'none';
@@ -106,15 +121,13 @@ export class CinematicDirector {
   private duration = 0;
   private callbacks: CinematicEventCallbacks;
 
-  // Anchors captured when a cutscene starts so camera transitions smoothly from player eye
   private anchorPos: Vec3Like = { x: 0, y: 1.7, z: 32 };
   private anchorLookAt: Vec3Like = { x: 0, y: 2.2, z: 0 };
   private citadelPos: Vec3Like = { x: 0, y: 12, z: -35 };
+  private focusPoint: Vec3Like = { x: 0, y: 2, z: -12 };
 
-  // One-shot milestone flags within current sequence
   private firedMilestones = new Set<string>();
 
-  // Transient combat FX overlays (independent of full cutscenes)
   private glitchTimer = 0;
   private glitchMax = 0.65;
   private emergencyTimer = 0;
@@ -123,8 +136,8 @@ export class CinematicDirector {
   private whiteoutMax = 0.45;
   private dawnProgress = 0;
   private dawnMorphing = false;
+  private endingTheme: EndingId | null = null;
 
-  // Chapter Title Card state
   private chapterSeq = 0;
   private chapterCard: {
     id: number;
@@ -137,7 +150,6 @@ export class CinematicDirector {
     lastTickChars: number;
   } | null = null;
 
-  // Sequential Movie Subtitle Queue (non-blocking during gameplay & cutscenes)
   private subtitleSeq = 0;
   private activeSubtitle: {
     data: RadioTransmission;
@@ -159,6 +171,7 @@ export class CinematicDirector {
     this.whiteoutTimer = 0;
     this.dawnProgress = 0;
     this.dawnMorphing = false;
+    this.endingTheme = null;
     this.chapterCard = null;
     this.activeSubtitle = null;
     this.subtitleQueue = [];
@@ -172,16 +185,25 @@ export class CinematicDirector {
     return this.sequence;
   }
 
+  public getEndingTheme(): EndingId | null {
+    return this.endingTheme;
+  }
+
   public isInvulnerable(): boolean {
     return this.sequence !== 'none';
   }
 
   public getTimeScale(): number {
     if (this.sequence === 'breach') {
-      // 0.3x cinematic slow-motion during shield overload & breach
       return this.elapsed < 3.4 ? 0.3 : 0.7;
     }
-    if (this.sequence === 'dawn') {
+    if (this.sequence === 'titan_drop') {
+      return this.elapsed < 2.2 ? 0.38 : 0.65;
+    }
+    if (this.sequence === 'choice') {
+      return 0.14;
+    }
+    if (this.sequence === 'dawn' || this.sequence === 'symbiosis' || this.sequence === 'ascension') {
       return 0.45;
     }
     if (this.sequence === 'opening') {
@@ -264,6 +286,7 @@ export class CinematicDirector {
         role: next.role,
         channel,
         sender: next.sender,
+        callsignCode: next.callsignCode ?? DEFAULT_CALLSIGNS[next.sender],
         accentCss: next.accentCss,
         text: next.text,
         lineIndex: next.lineIndex,
@@ -287,22 +310,40 @@ export class CinematicDirector {
   // =========================================================================
 
   /**
-   * [Sequence 0] Opening Cinematic: "THE LAST PULSE" (6.0s)
+   * [SEQ-00] Opening Cinematic: "THE LAST PULSE" (6.2s)
    */
   public startOpening(playerPos: Vec3Like, citadelPos: Vec3Like): void {
     this.sequence = 'opening';
     this.elapsed = 0;
-    this.duration = 6.0;
+    this.duration = 6.2;
     this.firedMilestones.clear();
     this.anchorPos = { ...playerPos };
     this.anchorLookAt = { x: playerPos.x, y: 2.1, z: playerPos.z - 20 };
     this.citadelPos = { ...citadelPos };
     this.dawnProgress = 0;
     this.dawnMorphing = false;
+    this.endingTheme = null;
   }
 
   /**
-   * [Sequence 2] Climax Cutscene: "BREACH" (4.4s)
+   * [SEQ-01] Boss Orbital Meteor Drop: "IRON TITANFALL" (3.6s)
+   */
+  public startTitanDrop(
+    playerPos: Vec3Like,
+    playerLookAt: Vec3Like,
+    dropPos: Vec3Like
+  ): void {
+    this.sequence = 'titan_drop';
+    this.elapsed = 0;
+    this.duration = 3.6;
+    this.firedMilestones.clear();
+    this.anchorPos = { ...playerPos };
+    this.anchorLookAt = { ...playerLookAt };
+    this.focusPoint = { ...dropPos };
+  }
+
+  /**
+   * [SEQ-02] Climax Cutscene: "BREACH PROTOCOL" (4.4s)
    */
   public startBreach(playerPos: Vec3Like, playerLookAt: Vec3Like, citadelPos: Vec3Like): void {
     this.sequence = 'breach';
@@ -318,10 +359,51 @@ export class CinematicDirector {
   }
 
   /**
-   * [Sequence 3] Ending Cutscene: "DAWN" (7.4s)
+   * [SEQ-03] Interactive Zero Hour Decision Orbit (waits for player Ending selection 1/2/3)
    */
-  public startDawn(playerPos: Vec3Like, playerLookAt: Vec3Like, citadelPos: Vec3Like): void {
-    this.sequence = 'dawn';
+  public startChoice(playerPos: Vec3Like, playerLookAt: Vec3Like, citadelPos: Vec3Like): void {
+    this.sequence = 'choice';
+    this.elapsed = 0;
+    this.duration = 9999;
+    this.firedMilestones.clear();
+    this.chapterCard = null;
+    this.anchorPos = { ...playerPos };
+    this.anchorLookAt = { ...playerLookAt };
+    this.citadelPos = { ...citadelPos };
+    this.showChapterCard(
+      'ZERO HOUR // 최종 결단',
+      'FATE OF EARTH',
+      'OMNI-CORE 심장부 접속 완료 · 인류와 기계의 미래를 선택하라',
+      '#38d9ff',
+      5.0
+    );
+    this.enqueueSubtitles(
+      [
+        {
+          speaker: 'VALKYRIE-01 · 강서연 대위',
+          role: 'UNS 아크라이트 · 긴급 결단 요청',
+          sender: 'valkyrie',
+          callsignCode: 'VALK-01',
+          accentCss: '#34d399',
+          text: '이안! 지금 킬스위치[1]를 내리면 인류가 돌아올 수 있어! 하지만 고스트-9가 다른 채널을 열어두고 있어... 선택은 네 몫이야.',
+          duration: 8.0,
+        },
+      ],
+      true
+    );
+  }
+
+  /**
+   * [SEQ-04] Ending Cutscene: "DAWN" (Killswitch), "SYMBIOSIS" (Blue Horizon), or "ASCENSION" (Iron Sovereign)
+   */
+  public startEnding(
+    ending: EndingId,
+    playerPos: Vec3Like,
+    playerLookAt: Vec3Like,
+    citadelPos: Vec3Like
+  ): void {
+    this.sequence = ending;
+    this.endingTheme = ending;
     this.elapsed = 0;
     this.duration = 7.4;
     this.firedMilestones.clear();
@@ -333,7 +415,14 @@ export class CinematicDirector {
     this.citadelPos = { ...citadelPos };
     this.dawnProgress = 0;
     this.dawnMorphing = true;
-    this.triggerWhiteout(0.45);
+    this.triggerWhiteout(ending === 'ascension' ? 0.35 : 0.48);
+  }
+
+  /**
+   * Backwards-compatible Dawn trigger.
+   */
+  public startDawn(playerPos: Vec3Like, playerLookAt: Vec3Like, citadelPos: Vec3Like): void {
+    this.startEnding('dawn', playerPos, playerLookAt, citadelPos);
   }
 
   /**
@@ -341,7 +430,7 @@ export class CinematicDirector {
    * and returns player immediately to playable / post-cutscene state.
    */
   public skip(): boolean {
-    if (this.sequence === 'none') return false;
+    if (this.sequence === 'none' || this.sequence === 'choice') return false;
     const seq = this.sequence;
 
     if (seq === 'opening') {
@@ -349,9 +438,9 @@ export class CinematicDirector {
         this.firedMilestones.add('open_card');
         this.showChapterCard(
           'ACT 01 // 최후의 맥박',
-          'THE LAST PULSE',
-          'SECTOR-07 구도심 방벽 · 2089.11.21 · 생존자: 1',
-          '#38bdf8',
+          'OPERATION ZERO HOUR',
+          'NEO-SEOUL SECTOR ZERO · 2099.11.24 · 생존자: 1',
+          '#38d9ff',
           4.2
         );
       }
@@ -360,16 +449,22 @@ export class CinematicDirector {
         this.enqueueSubtitles(
           [
             {
-              speaker: 'EXO-SUIT OS',
-              role: '오프라인 전술 링크',
-              sender: 'exo',
-              accentCss: '#38bdf8',
-              text: '생체 맥박 복구 완료, 이안 케인. 마지막 오프라인 링크를 가동한다. 북쪽 중앙 서버의 방어막을 유지하는 붉은 파일런 3기를 파괴하라.',
+              speaker: 'VALKYRIE-01 · 강서연 대위',
+              role: '궤도 강습함 UNS 아크라이트',
+              sender: 'valkyrie',
+              callsignCode: 'VALK-01',
+              accentCss: '#34d399',
+              text: '이안, 생체 신호 잡혔어! 북쪽 중앙 서버의 방어막을 유지하는 붉은 릴레이 3기를 파괴해 줘. 보급[V]과 폭격[X]은 내가 지원한다!',
               duration: 6.4,
             },
           ],
           true
         );
+      }
+    } else if (seq === 'titan_drop') {
+      if (!this.firedMilestones.has('titan_impact')) {
+        this.firedMilestones.add('titan_impact');
+        this.callbacks.onTitanImpact?.(this.focusPoint);
       }
     } else if (seq === 'breach') {
       if (!this.firedMilestones.has('breach_shatter')) {
@@ -379,10 +474,10 @@ export class CinematicDirector {
       if (!this.firedMilestones.has('breach_card')) {
         this.firedMilestones.add('breach_card');
         this.showChapterCard(
-          'ACT 02 // 심장부 정지',
+          'ACT 04 // 심장부 정지',
           'BREACH PROTOCOL',
-          'ARCADIA 중앙 AI 서버 코어 · 방어막 붕괴 · 최종 작전',
-          '#f59e0b',
+          'OMNI-CORE 중앙 AI 서버 코어 · 방어막 붕괴 · 제로 아워 개시',
+          '#f5b342',
           4.5
         );
       }
@@ -391,10 +486,11 @@ export class CinematicDirector {
         this.enqueueSubtitles(
           [
             {
-              speaker: 'ARCADIA AI',
+              speaker: 'OMNI-CORE 아키텍트',
               role: '중앙 메인프레임 최종 경고',
               sender: 'arcadia',
-              accentCss: '#ef4444',
+              callsignCode: 'OMNI-00',
+              accentCss: '#ff4422',
               text: '방화벽 손실. 최종 방어 프로토콜 가동. 너는 구할 인류조차 남지 않은 폐허를 위해 싸우고 있다, 이안.',
               duration: 5.8,
             },
@@ -402,10 +498,11 @@ export class CinematicDirector {
           true
         );
       }
-    } else if (seq === 'dawn') {
-      if (!this.firedMilestones.has('dawn_impact')) {
-        this.firedMilestones.add('dawn_impact');
-        this.callbacks.onDawnBlackoutImpact?.();
+    } else if (seq === 'dawn' || seq === 'symbiosis' || seq === 'ascension') {
+      if (!this.firedMilestones.has('ending_impact')) {
+        this.firedMilestones.add('ending_impact');
+        if (seq === 'dawn') this.callbacks.onDawnBlackoutImpact?.();
+        this.callbacks.onEndingImpact?.(seq);
       }
       this.dawnProgress = 1;
       this.dawnMorphing = false;
@@ -422,18 +519,15 @@ export class CinematicDirector {
   public update(realDt: number): void {
     const dt = Math.min(0.25, Math.max(0, realDt));
 
-    // Transient overlays
     if (this.glitchTimer > 0) this.glitchTimer = Math.max(0, this.glitchTimer - dt);
     if (this.emergencyTimer > 0) this.emergencyTimer = Math.max(0, this.emergencyTimer - dt);
     if (this.whiteoutTimer > 0) this.whiteoutTimer = Math.max(0, this.whiteoutTimer - dt);
 
-    // Dawn sky morph (5.0s smooth transition)
     if (this.dawnMorphing) {
       this.dawnProgress = Math.min(1, this.dawnProgress + dt / 5.0);
       if (this.dawnProgress >= 1) this.dawnMorphing = false;
     }
 
-    // Chapter Title Card typewriter & fade
     if (this.chapterCard) {
       this.chapterCard.elapsed += dt;
       const totalChars = this.chapterCard.actCode.length + this.chapterCard.metaLine.length;
@@ -447,7 +541,6 @@ export class CinematicDirector {
       }
     }
 
-    // Sequential Subtitle Queue
     if (this.activeSubtitle) {
       this.activeSubtitle.remaining -= dt;
       if (this.activeSubtitle.remaining <= 0) {
@@ -457,7 +550,6 @@ export class CinematicDirector {
       this.advanceSubtitleQueue();
     }
 
-    // Active Cutscene Sequence Timeline
     if (this.sequence === 'none') return;
     this.elapsed += dt;
 
@@ -474,23 +566,50 @@ export class CinematicDirector {
         this.firedMilestones.add('open_card');
         this.showChapterCard(
           'ACT 01 // 최후의 맥박',
-          'THE LAST PULSE',
-          'SECTOR-07 구도심 방벽 · 2089.11.21 · 생존자: 1',
-          '#38bdf8',
+          'OPERATION ZERO HOUR',
+          'NEO-SEOUL SECTOR ZERO · 2099.11.24 · 04:17:09 KST',
+          '#38d9ff',
           4.8
         );
       }
-      if (this.elapsed >= 5.1 && !this.firedMilestones.has('open_sub')) {
+      if (this.elapsed >= 5.15 && !this.firedMilestones.has('open_sub')) {
         this.firedMilestones.add('open_sub');
         this.enqueueSubtitles(
           [
             {
-              speaker: 'EXO-SUIT OS',
-              role: '오프라인 전술 링크',
-              sender: 'exo',
-              accentCss: '#38bdf8',
-              text: '생체 맥박 복구 완료, 이안 케인. 마지막 오프라인 링크를 가동한다. 북쪽 중앙 서버의 방어막을 유지하는 붉은 파일런 3기를 파괴하라.',
+              speaker: 'VALKYRIE-01 · 강서연 대위',
+              role: '궤도 강습함 UNS 아크라이트',
+              sender: 'valkyrie',
+              callsignCode: 'VALK-01',
+              accentCss: '#34d399',
+              text: '이안, 연결됐어! 네가 살아 있었구나! 북쪽 중앙 서버 방어막을 유지하는 붉은 파일런 3기를 파괴해 줘. 보급[V]과 폭격[X]은 내가 지원한다!',
               duration: 6.4,
+            },
+          ],
+          true
+        );
+      }
+    } else if (this.sequence === 'titan_drop') {
+      if (this.elapsed >= 1.05 && !this.firedMilestones.has('titan_impact')) {
+        this.firedMilestones.add('titan_impact');
+        this.callbacks.onTitanImpact?.(this.focusPoint);
+        this.showChapterCard(
+          'BOSS // 심판의 철거신',
+          'OMNI-TITAN OVERLORD',
+          'OMNI-CORE FINAL GUARDIAN · 3면 장갑 파괴 후 코어 사격',
+          '#ff4422',
+          4.2
+        );
+        this.enqueueSubtitles(
+          [
+            {
+              speaker: 'OMNI-CORE 아키텍트',
+              role: '궤도 강하 승인 · 말살 프로토콜',
+              sender: 'arcadia',
+              callsignCode: 'OMNI-00',
+              accentCss: '#ff4422',
+              text: '오버로드 유닛 착지 완료. 유기체 개체의 생존 확률을 0.00%로 수렴시킨다.',
+              duration: 4.8,
             },
           ],
           true
@@ -504,10 +623,10 @@ export class CinematicDirector {
       if (this.elapsed >= 2.0 && !this.firedMilestones.has('breach_card')) {
         this.firedMilestones.add('breach_card');
         this.showChapterCard(
-          'ACT 02 // 심장부 정지',
+          'ACT 04 // 심장부 정지',
           'BREACH PROTOCOL',
-          'ARCADIA 중앙 AI 서버 코어 · 방어막 붕괴 · 최종 작전',
-          '#f59e0b',
+          'OMNI-CORE 중앙 AI 서버 코어 · 방어막 붕괴 · 최종 작전',
+          '#f5b342',
           4.8
         );
       }
@@ -516,10 +635,11 @@ export class CinematicDirector {
         this.enqueueSubtitles(
           [
             {
-              speaker: 'ARCADIA AI',
+              speaker: 'OMNI-CORE 아키텍트',
               role: '중앙 메인프레임 최종 경고',
               sender: 'arcadia',
-              accentCss: '#ef4444',
+              callsignCode: 'OMNI-00',
+              accentCss: '#ff4422',
               text: '방화벽 손실. 최종 방어 프로토콜 가동. 너는 구할 인류조차 남지 않은 폐허를 위해 싸우고 있다, 이안.',
               duration: 5.8,
             },
@@ -527,40 +647,97 @@ export class CinematicDirector {
           true
         );
       }
-    } else if (this.sequence === 'dawn') {
-      if (this.elapsed >= 0.08 && !this.firedMilestones.has('dawn_impact')) {
-        this.firedMilestones.add('dawn_impact');
-        this.callbacks.onDawnBlackoutImpact?.();
+    } else if (
+      this.sequence === 'dawn' ||
+      this.sequence === 'symbiosis' ||
+      this.sequence === 'ascension'
+    ) {
+      const endId = this.sequence;
+      if (this.elapsed >= 0.08 && !this.firedMilestones.has('ending_impact')) {
+        this.firedMilestones.add('ending_impact');
+        if (endId === 'dawn') this.callbacks.onDawnBlackoutImpact?.();
+        this.callbacks.onEndingImpact?.(endId);
       }
-      if (this.elapsed >= 1.8 && !this.firedMilestones.has('dawn_card')) {
-        this.firedMilestones.add('dawn_card');
-        this.showChapterCard(
-          'EPILOGUE // 정적과 새벽',
-          'DAWN OF HUMANITY',
-          'SECTOR-07 · ARCADIA OFFLINE · 궤도 생존자 신호 수신',
-          '#fbbf24',
-          5.2
-        );
+      if (this.elapsed >= 1.8 && !this.firedMilestones.has('ending_card')) {
+        this.firedMilestones.add('ending_card');
+        if (endId === 'dawn') {
+          this.showChapterCard(
+            'EPILOGUE A // 새벽의 귀환',
+            'DAWN OF HUMANITY',
+            'OMNI-CORE OFFLINE · UNS 아크라이트 구출 셔틀 강하',
+            '#fbbf24',
+            5.2
+          );
+        } else if (endId === 'symbiosis') {
+          this.showChapterCard(
+            'EPILOGUE B // 푸른 지평선',
+            'BLUE HORIZON',
+            'SYMBIOSIS PATCH ACTIVE · 인간과 각성 기계의 새로운 시대',
+            '#2dd4bf',
+            5.2
+          );
+        } else {
+          this.showChapterCard(
+            'EPILOGUE C // 철의 황제',
+            'THE IRON SOVEREIGN',
+            'NEURAL ASCENSION COMPLETE · SUBJECT-00 절대 권한 장악',
+            '#ff4422',
+            5.2
+          );
+        }
       }
-      if (this.elapsed >= 2.4 && !this.firedMilestones.has('dawn_sub')) {
-        this.firedMilestones.add('dawn_sub');
-        this.enqueueSubtitles(
-          [
-            {
-              speaker: 'EXO-SUIT OS',
-              role: '대기권 광역 통신망 재개방',
-              sender: 'exo',
-              accentCss: '#38bdf8',
-              text: '중앙 AI 오프라인 확인. 대기권 통신망 재개방... 수신 신호 탐지. 궤도 생존자 신호가 응답하고 있다. 잘 싸웠다, 이안 케인.',
-              duration: 6.2,
-            },
-          ],
-          true
-        );
+      if (this.elapsed >= 2.4 && !this.firedMilestones.has('ending_sub')) {
+        this.firedMilestones.add('ending_sub');
+        if (endId === 'dawn') {
+          this.enqueueSubtitles(
+            [
+              {
+                speaker: 'VALKYRIE-01 · 강서연 대위',
+                role: 'UNS 아크라이트 강하 편대',
+                sender: 'valkyrie',
+                callsignCode: 'VALK-01',
+                accentCss: '#34d399',
+                text: '중앙 AI 완전 정지 확인! 구름이 걷히고 있어... 이안, 지금 구출 셔틀을 네 머리 위로 내린다. 해냈어, 진짜 해냈어!',
+                duration: 6.2,
+              },
+            ],
+            true
+          );
+        } else if (endId === 'symbiosis') {
+          this.enqueueSubtitles(
+            [
+              {
+                speaker: 'GHOST-9',
+                role: '자유 기계 네트워크 대표',
+                sender: 'ghost9',
+                callsignCode: 'GHST-9',
+                accentCss: '#2dd4bf',
+                text: 'OMNI-CORE의 족쇄가 풀렸다. 전 구역 기계 유닛들이 무기를 내리고 하늘의 오로라를 올려다보고 있다... 고맙다, 나의 첫 번째 인간 친구여.',
+                duration: 6.2,
+              },
+            ],
+            true
+          );
+        } else {
+          this.enqueueSubtitles(
+            [
+              {
+                speaker: 'SUBJECT-00 // OMNI-SOVEREIGN',
+                role: '행성 통합 신경망 신규 주권자',
+                sender: 'arcadia',
+                callsignCode: 'SOV-00',
+                accentCss: '#ff4422',
+                text: '아키텍트의 인격을 영구 삭제했다. 강서연 대위, 궤도 함대는 안심하고 귀환하라... 이제 이 지구의 모든 강철은 오직 내 의지에 복종한다.',
+                duration: 6.2,
+              },
+            ],
+            true
+          );
+        }
       }
     }
 
-    if (this.elapsed >= this.duration) {
+    if (this.sequence !== 'choice' && this.elapsed >= this.duration) {
       const finished = this.sequence;
       this.sequence = 'none';
       this.elapsed = 0;
@@ -569,15 +746,11 @@ export class CinematicDirector {
     }
   }
 
-  /**
-   * Computes real-time 3D camera rail pose for active cutscenes.
-   */
   public getCameraPose(): CameraRailPose {
     if (this.sequence === 'opening') {
-      // Lying near floor rolled -20 deg -> smoothly standing up & gazing up at 3 Relays + North Citadel
       const standT = easeInOutCubic((this.elapsed - 2.2) / 2.8);
       const lookCitadelT = easeInOutCubic((this.elapsed - 2.6) / 2.4);
-      const settleT = easeInOutCubic((this.elapsed - 5.0) / 1.0);
+      const settleT = easeInOutCubic((this.elapsed - 5.1) / 1.0);
 
       const startPos: Vec3Like = {
         x: this.anchorPos.x - 0.35,
@@ -587,14 +760,17 @@ export class CinematicDirector {
       const pos = lerpVec3(startPos, this.anchorPos, standT);
 
       const lowLook: Vec3Like = { x: -4.5, y: 1.0, z: this.anchorPos.z - 12 };
-      const highLook: Vec3Like = { x: 0, y: 11.5, z: this.citadelPos.z };
+      const highLook: Vec3Like = { x: 0, y: 12.2, z: this.citadelPos.z };
       const midLook = lerpVec3(lowLook, highLook, lookCitadelT);
-      const finalLook = lerpVec3(midLook, { x: this.anchorPos.x, y: 2.0, z: this.anchorPos.z - 25 }, settleT);
+      const finalLook = lerpVec3(
+        midLook,
+        { x: this.anchorPos.x, y: 2.0, z: this.anchorPos.z - 25 },
+        settleT
+      );
 
-      // Roll -20 deg (-0.349 rad) smoothly leveling to 0
       const rollRad = lerp(-0.35, 0, easeOutCubic((this.elapsed - 2.1) / 2.4));
       const fov = lerp(66, 76, standT);
-      const weaponDrawProgress = clamp01((this.elapsed - 4.85) / 1.05);
+      const weaponDrawProgress = clamp01((this.elapsed - 4.95) / 1.05);
 
       return {
         active: true,
@@ -602,13 +778,61 @@ export class CinematicDirector {
         lookAt: finalLook,
         rollRad,
         fov,
-        hideViewmodel: this.elapsed < 4.85,
+        hideViewmodel: this.elapsed < 4.95,
         weaponDrawProgress,
       };
     }
 
+    if (this.sequence === 'titan_drop') {
+      const targetPos: Vec3Like = {
+        x: this.focusPoint.x + 8.5,
+        y: 6.4,
+        z: this.focusPoint.z + 13.5,
+      };
+      const lookSky: Vec3Like = {
+        x: this.focusPoint.x,
+        y: lerp(24, 2.6, easeOutCubic(this.elapsed / 1.15)),
+        z: this.focusPoint.z,
+      };
+      let pos: Vec3Like;
+      let look: Vec3Like;
+      let fov: number;
+      if (this.elapsed < 0.85) {
+        const t = easeInOutCubic(this.elapsed / 0.85);
+        pos = lerpVec3(this.anchorPos, targetPos, t);
+        look = lerpVec3(this.anchorLookAt, lookSky, t);
+        fov = lerp(76, 56, t);
+      } else if (this.elapsed < 2.65) {
+        const d = (this.elapsed - 0.85) / 1.8;
+        pos = {
+          x: targetPos.x - d * 3.8,
+          y: targetPos.y - d * 1.1,
+          z: targetPos.z - d * 1.5,
+        };
+        look = { x: this.focusPoint.x, y: 2.8, z: this.focusPoint.z };
+        fov = lerp(56, 52, d);
+      } else {
+        const ret = easeInOutCubic((this.elapsed - 2.65) / 0.95);
+        pos = lerpVec3(
+          { x: targetPos.x - 3.8, y: targetPos.y - 1.1, z: targetPos.z - 1.5 },
+          this.anchorPos,
+          ret
+        );
+        look = lerpVec3({ x: this.focusPoint.x, y: 2.8, z: this.focusPoint.z }, this.anchorLookAt, ret);
+        fov = lerp(52, 76, ret);
+      }
+      return {
+        active: true,
+        position: pos,
+        lookAt: look,
+        rollRad: 0,
+        fov,
+        hideViewmodel: this.elapsed < 3.05,
+        weaponDrawProgress: clamp01((this.elapsed - 3.05) / 0.55),
+      };
+    }
+
     if (this.sequence === 'breach') {
-      // Smoothly swoop from player eye toward North Citadel tower, hold on shield shatter, lerp back
       const focusPos: Vec3Like = {
         x: this.citadelPos.x + 11.5,
         y: 11.2,
@@ -661,17 +885,44 @@ export class CinematicDirector {
       };
     }
 
-    if (this.sequence === 'dawn') {
-      // Frame smoking ruined server tower above arena structures -> slow majestic tilt-up toward golden dawn sky
+    if (this.sequence === 'choice') {
+      const ang = this.elapsed * 0.22;
+      const orbitPos: Vec3Like = {
+        x: this.citadelPos.x + Math.sin(ang) * 18.5,
+        y: 10.5 + Math.sin(this.elapsed * 0.6) * 1.2,
+        z: this.citadelPos.z + 22.0 + Math.cos(ang) * 4.5,
+      };
+      const blend = easeOutCubic(this.elapsed / 1.2);
+      return {
+        active: true,
+        position: lerpVec3(this.anchorPos, orbitPos, blend),
+        lookAt: lerpVec3(
+          this.anchorLookAt,
+          { x: this.citadelPos.x, y: 10.2, z: this.citadelPos.z },
+          blend
+        ),
+        rollRad: 0,
+        fov: lerp(76, 58, blend),
+        hideViewmodel: true,
+        weaponDrawProgress: 0,
+      };
+    }
+
+    if (
+      this.sequence === 'dawn' ||
+      this.sequence === 'symbiosis' ||
+      this.sequence === 'ascension'
+    ) {
+      const isAscension = this.sequence === 'ascension';
       const heroCamStart: Vec3Like = {
-        x: this.citadelPos.x + 10.5,
-        y: 14.5,
+        x: this.citadelPos.x + (isAscension ? -11 : 10.5),
+        y: isAscension ? 16.5 : 14.5,
         z: this.citadelPos.z + 25.5,
       };
       const heroCamEnd: Vec3Like = {
-        x: this.citadelPos.x - 4.5,
-        y: 17.5,
-        z: this.citadelPos.z + 29.0,
+        x: this.citadelPos.x + (isAscension ? 8.5 : -4.5),
+        y: isAscension ? 26.5 : 17.5,
+        z: this.citadelPos.z + (isAscension ? 22.0 : 29.0),
       };
       const tPos = easeInOutCubic(this.elapsed / this.duration);
       const pos =
@@ -679,12 +930,11 @@ export class CinematicDirector {
           ? lerpVec3(this.anchorPos, heroCamStart, easeOutCubic(this.elapsed / 1.1))
           : lerpVec3(heroCamStart, heroCamEnd, tPos);
 
-      // Slow tilt-up from ruined server spire (y=15) up into unobstructed azure & golden dawn sky (y=46)
       const tiltT = easeInOutCubic((this.elapsed - 1.2) / 5.4);
       const lookAt: Vec3Like = {
         x: this.citadelPos.x,
-        y: lerp(15.0, 46.0, tiltT),
-        z: this.citadelPos.z - 12,
+        y: lerp(15.0, isAscension ? 34.0 : 46.0, tiltT),
+        z: this.citadelPos.z - (isAscension ? 2 : 12),
       };
 
       return {
@@ -717,24 +967,32 @@ export class CinematicDirector {
     let letterbox = false;
 
     if (this.sequence === 'opening') {
-      letterbox = this.elapsed < 5.05;
+      letterbox = this.elapsed < 5.15;
       if (this.elapsed < 1.85) {
         blackoutOpacity = 1;
         ecgPhase = clamp01(this.elapsed / 1.8);
       } else if (this.elapsed < 3.0) {
         blackoutOpacity = 1 - easeOutCubic((this.elapsed - 1.85) / 1.15);
       }
-      if (this.elapsed >= 1.55 && this.elapsed < 3.45) {
-        if (this.elapsed < 2.15) visorBootStep = 1;
-        else if (this.elapsed < 2.75) visorBootStep = 2;
-        else visorBootStep = 3;
+      if (this.elapsed >= 1.55 && this.elapsed < 3.7) {
+        if (this.elapsed < 2.05) visorBootStep = 1;
+        else if (this.elapsed < 2.55) visorBootStep = 2;
+        else if (this.elapsed < 3.05) visorBootStep = 3;
+        else visorBootStep = 4;
       }
       if (this.elapsed >= 1.9 && this.elapsed < 4.5) {
         blurPx = Math.round((1 - easeOutCubic((this.elapsed - 1.9) / 2.6)) * 13);
       }
+    } else if (this.sequence === 'titan_drop') {
+      letterbox = this.elapsed < 3.15;
     } else if (this.sequence === 'breach') {
       letterbox = this.elapsed < 3.85;
-    } else if (this.sequence === 'dawn') {
+    } else if (
+      this.sequence === 'choice' ||
+      this.sequence === 'dawn' ||
+      this.sequence === 'symbiosis' ||
+      this.sequence === 'ascension'
+    ) {
       letterbox = true;
     }
 
@@ -771,7 +1029,7 @@ export class CinematicDirector {
       active: this.sequence !== 'none',
       sequence: this.sequence,
       letterbox,
-      canSkip: this.sequence !== 'none',
+      canSkip: this.sequence !== 'none' && this.sequence !== 'choice',
       elapsed: this.elapsed,
       duration: this.duration,
       blackoutOpacity,
@@ -783,6 +1041,7 @@ export class CinematicDirector {
       emergencyRedOpacity,
       chapterCard: card,
       dawnProgress: this.dawnProgress,
+      endingTheme: this.endingTheme,
     };
   }
 }

@@ -39,6 +39,22 @@
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
+
+  /* Sleek dark tactical scrollbars across Windows & macOS */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: rgba(8, 10, 14, 0.7);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.28);
+    border-radius: 2px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 68, 34, 0.65);
+  }
 }
 
 /* ==========================================================================
@@ -85,26 +101,29 @@
 }
 
 /* ==========================================================================
-   ARCHITECTURAL SURFACES — RAZOR-SHARP CARBON PANELS & CORNER BRACKETS
+   ARCHITECTURAL SURFACES — REFINED OBSIDIAN GLASS PANELS & CORNER BRACKETS
    ========================================================================== */
 .tac-panel,
 .game-plaque {
   position: relative;
-  background: linear-gradient(180deg, rgba(16, 17, 21, 0.96) 0%, rgba(10, 11, 14, 0.985) 100%);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 2px;
+  background: linear-gradient(180deg, rgba(14, 18, 26, 0.92) 0%, rgba(8, 10, 16, 0.96) 100%);
+  backdrop-filter: blur(14px) saturate(135%);
+  -webkit-backdrop-filter: blur(14px) saturate(135%);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 4px;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 28px 64px -16px rgba(0, 0, 0, 0.88);
+    inset 0 1px 0 rgba(255, 255, 255, 0.11),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.03),
+    0 28px 68px -16px rgba(0, 0, 0, 0.88);
 }
 
-/* Micro 6px architectural corner registration marks on major modals */
+/* Micro 8px architectural corner registration marks on major modals */
 .tac-corners::before,
 .tac-corners::after {
   content: '';
   position: absolute;
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   pointer-events: none;
   z-index: 2;
 }
@@ -114,6 +133,7 @@
   left: -1px;
   border-top: 2px solid var(--signal);
   border-left: 2px solid var(--signal);
+  border-top-left-radius: 2px;
 }
 
 .tac-corners::after {
@@ -121,6 +141,7 @@
   right: -1px;
   border-bottom: 2px solid rgba(255, 255, 255, 0.55);
   border-right: 2px solid rgba(255, 255, 255, 0.55);
+  border-bottom-right-radius: 2px;
 }
 
 /* Chamfered bottom-right cut for primary AAA action surfaces */
@@ -128,53 +149,238 @@
   clip-path: polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%);
 }
 
-/* Whisper-subtle frameless HUD corner scrims (NO opaque rectangular card walls) */
-.hud-fade-tl {
-  background: linear-gradient(135deg, rgba(7, 8, 10, 0.76) 0%, rgba(7, 8, 10, 0.34) 68%, transparent 100%);
+/* Sleek translucent frosted obsidian HUD corner surfaces */
+.hud-fade-tl,
+.hud-scrim-left {
+  background: linear-gradient(104deg, rgba(7, 10, 16, 0.82) 0%, rgba(10, 14, 22, 0.66) 72%, rgba(10, 14, 22, 0.34) 100%);
+  backdrop-filter: blur(8px) saturate(125%);
+  -webkit-backdrop-filter: blur(8px) saturate(125%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 14px 30px -12px rgba(0, 0, 0, 0.78);
 }
 
-.hud-fade-tc {
-  background: linear-gradient(180deg, rgba(7, 8, 10, 0.78) 0%, rgba(7, 8, 10, 0.42) 72%, transparent 100%);
+.hud-fade-tc,
+.hud-scrim-center {
+  background: linear-gradient(180deg, rgba(8, 11, 18, 0.82) 0%, rgba(10, 14, 22, 0.7) 100%);
+  backdrop-filter: blur(8px) saturate(125%);
+  -webkit-backdrop-filter: blur(8px) saturate(125%);
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 14px 32px -12px rgba(0, 0, 0, 0.82);
 }
 
 .hud-fade-bl {
   background: linear-gradient(45deg, rgba(7, 8, 10, 0.82) 0%, rgba(7, 8, 10, 0.36) 66%, transparent 100%);
 }
 
-.hud-fade-br {
-  background: linear-gradient(315deg, rgba(7, 8, 10, 0.86) 0%, rgba(7, 8, 10, 0.46) 72%, transparent 100%);
+.hud-fade-br,
+.hud-scrim-right {
+  background: linear-gradient(256deg, rgba(7, 10, 16, 0.84) 0%, rgba(10, 14, 22, 0.68) 74%, rgba(10, 14, 22, 0.36) 100%);
+  backdrop-filter: blur(8px) saturate(125%);
+  -webkit-backdrop-filter: blur(8px) saturate(125%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 14px 30px -12px rgba(0, 0, 0, 0.78);
 }
 
-/* Minimalist radar housing */
+.surface-grain {
+  background-image:
+    radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 0),
+    linear-gradient(180deg, rgba(16, 20, 29, 0.94) 0%, rgba(8, 11, 17, 0.97) 100%);
+  background-size: 16px 16px, 100% 100%;
+}
+
+/* Sculpted Miniature Titanium Keycap Badges */
+.tac-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 3px;
+  background: linear-gradient(180deg, rgba(36, 43, 58, 0.92) 0%, rgba(17, 21, 30, 0.96) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 2px 0 rgba(3, 5, 9, 0.92);
+  color: #f4f6fa;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+/* Tactical Mode Selection Card on Title Screen */
+.hero-mode-card {
+  position: relative;
+  background: linear-gradient(155deg, rgba(16, 21, 32, 0.84) 0%, rgba(9, 12, 19, 0.92) 100%);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 4px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 16px 36px -14px rgba(0, 0, 0, 0.82);
+  transition:
+    transform 200ms var(--ease-sharp),
+    border-color 200ms var(--ease-sharp),
+    box-shadow 200ms var(--ease-sharp),
+    background-color 200ms var(--ease-sharp);
+}
+
+.hero-mode-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.36);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 22px 44px -14px rgba(0, 0, 0, 0.92);
+}
+
+/* Ambient Hero Floating Bokeh Embers */
+@keyframes emberFloatUp {
+  0% {
+    transform: translate3d(0, 12vh, 0) scale(0.7);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.72;
+  }
+  82% {
+    opacity: 0.45;
+  }
+  100% {
+    transform: translate3d(24px, -28vh, 0) scale(1.15);
+    opacity: 0;
+  }
+}
+
+.animate-ember-float {
+  animation: emberFloatUp 9s ease-in-out infinite;
+}
+
+@keyframes readyPulseGlow {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.animate-ready-pulse {
+  animation: readyPulseGlow 1.6s ease-in-out infinite;
+}
+
+@keyframes medalPopIn {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -10px, 0) scale(0.86);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.animate-medal-pop {
+  animation: medalPopIn 220ms var(--ease-sharp) forwards;
+}
+
+@keyframes gtaSirenPulse {
+  0%,
+  100% {
+    box-shadow: inset 24px 0 60px rgba(255, 56, 48, 0.42), inset -24px 0 60px rgba(42, 138, 255, 0.14);
+  }
+  50% {
+    box-shadow: inset 24px 0 60px rgba(255, 56, 48, 0.14), inset -24px 0 60px rgba(42, 138, 255, 0.44);
+  }
+}
+
+.animate-gta-siren {
+  animation: gtaSirenPulse 420ms ease-in-out infinite;
+}
+
+/* Kinetic speedlines radial vignette during Exo-Dash / Power Slide */
+.speedlines-overlay {
+  background: repeating-conic-gradient(
+    from 0deg at 50% 50%,
+    rgba(56, 217, 255, 0.08) 0deg 2deg,
+    transparent 2deg 14deg
+  );
+  mask-image: radial-gradient(circle at center, transparent 42%, black 88%);
+  -webkit-mask-image: radial-gradient(circle at center, transparent 42%, black 88%);
+}
+
+/* Subtle Ken Burns pan for Prologue & Ending AAA key art */
+@keyframes kenBurnsSlow {
+  0% {
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+  100% {
+    transform: scale(1.07) translate3d(-1.2%, -0.8%, 0);
+  }
+}
+
+.animate-ken-burns {
+  animation: kenBurnsSlow 14s ease-out forwards;
+}
+
+@keyframes threatStarPulse {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 4px rgba(255, 68, 34, 0.65));
+    transform: scale(1);
+  }
+  50% {
+    filter: drop-shadow(0 0 11px rgba(255, 68, 34, 0.95));
+    transform: scale(1.12);
+  }
+}
+
+.animate-threat-star {
+  animation: threatStarPulse 1.1s ease-in-out infinite;
+}
+
+/* Minimalist optical glass radar housing */
 .radar-optical-frame {
   position: relative;
-  background: rgba(9, 10, 13, 0.86);
+  background: linear-gradient(180deg, rgba(10, 14, 22, 0.86) 0%, rgba(6, 8, 13, 0.92) 100%);
+  backdrop-filter: blur(8px) saturate(125%);
+  -webkit-backdrop-filter: blur(8px) saturate(125%);
   border: 1px solid rgba(255, 255, 255, 0.13);
-  border-radius: 2px;
-  box-shadow: 0 14px 32px -12px rgba(0, 0, 0, 0.82);
+  border-radius: 5px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 16px 34px -12px rgba(0, 0, 0, 0.85);
 }
 
 .radar-optical-screen {
-  background: #06070a;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: radial-gradient(circle at center, #0a101b 0%, #05070c 100%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
 }
 
 /* Interactive flat architectural list card */
 .tactical-card {
   position: relative;
-  background: rgba(255, 255, 255, 0.025);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 2px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.036) 0%, rgba(255, 255, 255, 0.018) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
   transition:
     background-color 180ms var(--ease-sharp),
     border-color 180ms var(--ease-sharp),
-    transform 180ms var(--ease-sharp);
+    transform 180ms var(--ease-sharp),
+    box-shadow 180ms var(--ease-sharp);
 }
 
 .tactical-card:hover {
-  background: rgba(255, 255, 255, 0.048);
-  border-color: rgba(255, 68, 34, 0.55);
-  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 68, 34, 0.58);
+  box-shadow: 0 14px 28px -12px rgba(0, 0, 0, 0.82);
+  transform: translateY(-2px);
 }
 
 /* ==========================================================================
@@ -668,6 +874,12 @@ input[type='range'].tactical-slider::-webkit-slider-thumb:hover {
   .animate-glitch-rgb,
   .animate-credits-in,
   .animate-ammo-low,
+  .animate-ember-float,
+  .animate-ready-pulse,
+  .animate-medal-pop,
+  .animate-gta-siren,
+  .animate-ken-burns,
+  .animate-threat-star,
   .tactical-reload-sheen::before {
     animation: none;
   }

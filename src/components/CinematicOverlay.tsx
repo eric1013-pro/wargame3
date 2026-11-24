@@ -1,102 +1,39 @@
-import React, { useEffect, useRef } from 'react';
-import { CinematicHudState, CommsSender, GamePhase, RadioTransmission } from '../game/types';
+import React from 'react';
+import { getPortraitUrlForComms } from '../game/campaignMissions';
+import { ENDING_PROFILES } from '../game/story';
+import {
+  CinematicHudState,
+  EndingId,
+  GamePhase,
+  RadioTransmission,
+} from '../game/types';
+import { Keycap } from './GameUiKit';
 
 interface CinematicOverlayProps {
   phase: GamePhase;
   cinematic: CinematicHudState;
   comms: RadioTransmission | null;
   onSkip: () => void;
+  onChooseEnding: (ending: EndingId) => void;
 }
 
-const LiveWaveformCanvas: React.FC<{ sender: CommsSender; accentCss: string }> = ({
-  sender,
-  accentCss,
-}) => {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  useEffect(() => {
-    let phase = 0;
-    const id = window.setInterval(() => {
-      const c = canvasRef.current;
-      if (!c) return;
-      const ctx = c.getContext('2d');
-      if (!ctx) return;
-
-      phase += sender === 'arcadia' ? 0.52 : sender === 'holotape' ? 0.24 : 0.34;
-      const w = c.width;
-      const h = c.height;
-      const mid = h / 2;
-
-      ctx.clearRect(0, 0, w, h);
-      ctx.strokeStyle = accentCss;
-      ctx.lineWidth = sender === 'arcadia' ? 1.8 : 1.65;
-      ctx.beginPath();
-
-      for (let x = 0; x <= w; x += 2) {
-        const nx = x / w;
-        const env = Math.sin(nx * Math.PI);
-        let y = mid;
-        if (sender === 'exo') {
-          y =
-            mid +
-            Math.sin(nx * Math.PI * 6 + phase) * 6.5 * env +
-            Math.sin(nx * Math.PI * 12 - phase * 1.4) * 2.2 * env;
-        } else if (sender === 'arcadia') {
-          const saw = ((nx * 7 + phase * 0.45) % 1) * 2 - 1;
-          const jitter = Math.sin(x * 1.9 + phase * 3.1) > 0.72 ? (Math.random() - 0.5) * 9 : 0;
-          y = mid + saw * 7.8 * env + jitter * env;
-        } else {
-          y =
-            mid +
-            Math.sin(nx * Math.PI * 8 + phase) * 4.8 * env +
-            Math.cos(nx * Math.PI * 19 + phase * 0.7) * 2.5 * env;
-        }
-        if (x === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    }, 48);
-
-    return () => clearInterval(id);
-  }, [sender, accentCss]);
-
-  return <canvas ref={canvasRef} width={72} height={24} className="w-[72px] h-6 shrink-0" />;
+const SEQ_LABELS: Record<CinematicHudState['sequence'], string> = {
+  none: 'STANDBY',
+  opening: 'SEQ-00 // THE LAST PULSE',
+  titan_drop: 'SEQ-01 // IRON TITANFALL',
+  breach: 'SEQ-02 // BREACH PROTOCOL',
+  choice: 'SEQ-03 // ZERO HOUR DECISION',
+  dawn: 'EPILOGUE A // DAWN OF HUMANITY',
+  symbiosis: 'EPILOGUE B // BLUE HORIZON',
+  ascension: 'EPILOGUE C // THE IRON SOVEREIGN',
 };
-
-const SpinningCassetteIcon: React.FC = () => (
-  <svg viewBox="0 0 36 24" className="w-9 h-6 shrink-0" aria-hidden="true">
-    <rect
-      x="1.5"
-      y="2"
-      width="33"
-      height="20"
-      rx="3"
-      fill="#181410"
-      stroke="#e89b3c"
-      strokeWidth="1.5"
-    />
-    <rect x="4.5" y="4.5" width="27" height="5.5" rx="1" fill="#e89b3c" fillOpacity="0.22" />
-    <rect x="8.5" y="12" width="19" height="6" rx="2" fill="#0b0d13" stroke="#e89b3c" strokeWidth="0.9" />
-    <g transform="translate(13, 15)">
-      <g className="animate-cassette-spin">
-        <circle cx="0" cy="0" r="2.6" fill="none" stroke="#f6b75e" strokeWidth="1.2" strokeDasharray="2 1.6" />
-        <circle cx="0" cy="0" r="0.9" fill="#f6b75e" />
-      </g>
-    </g>
-    <g transform="translate(23, 15)">
-      <g className="animate-cassette-spin">
-        <circle cx="0" cy="0" r="2.6" fill="none" stroke="#f6b75e" strokeWidth="1.2" strokeDasharray="2 1.6" />
-        <circle cx="0" cy="0" r="0.9" fill="#f6b75e" />
-      </g>
-    </g>
-  </svg>
-);
 
 export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
   phase,
   cinematic,
   comms,
   onSkip,
+  onChooseEnding,
 }) => {
   if (phase !== 'playing' && phase !== 'paused') return null;
 
@@ -110,6 +47,9 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
   const ecgDashOffset =
     cinematic.ecgPhase >= 0 ? Math.max(0, 620 - cinematic.ecgPhase * 620) : 620;
 
+  const isChoiceActive = cinematic.sequence === 'choice';
+  const endingChoices: EndingId[] = ['dawn', 'symbiosis', 'ascension'];
+
   return (
     <div className="fixed inset-0 z-25 pointer-events-none overflow-hidden">
       {/* 1) OPENING PITCH-BLACK BLACKOUT + GREEN ECG HEARTBEAT */}
@@ -122,7 +62,7 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
           {cinematic.ecgPhase >= 0 && (
             <div className="w-full max-w-lg px-6 flex flex-col items-center">
               <div className="text-[11px] font-tactical tracking-[0.28em] text-[#34d399]/80 mb-3 tabular-nums">
-                BIO-TELEMETRY // VAULT-00 CRYO-POD
+                BIO-TELEMETRY // VAULT-00 CRYO-POD · NEO-SEOUL 2099
               </div>
               <svg viewBox="0 0 600 90" className="w-full h-20" aria-hidden="true">
                 <path
@@ -155,9 +95,9 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
           className="fixed inset-0 flex items-center justify-center visor-scanlines"
           data-testid="visor-boot-overlay"
         >
-          <div className="w-full max-w-xl mx-6 px-6 py-5 rounded-lg border border-[#56c2ff]/35 bg-[#090e17]/86 font-tactical shadow-[0_24px_56px_rgba(0,0,0,0.68)] tabular-nums">
-            <div className="flex items-center justify-between text-[10px] tracking-[0.22em] text-[#56c2ff] border-b border-white/[0.08] pb-2.5 mb-3">
-              <span>EXO-SUIT MK.IV // VISOR BOOT SEQUENCE</span>
+          <div className="w-full max-w-xl mx-6 px-6 py-5 rounded-md border border-[#38d9ff]/35 bg-[#090e17]/88 font-tactical shadow-[0_24px_56px_rgba(0,0,0,0.72)] tabular-nums">
+            <div className="flex items-center justify-between text-[10px] tracking-[0.22em] text-[#38d9ff] border-b border-white/[0.08] pb-2.5 mb-3">
+              <span>EXO-SUIT MK.IV // VISOR BOOT SEQUENCE V3.0</span>
               <span className="text-[#34d399]">SYS_OK</span>
             </div>
             <div className="space-y-2 text-xs sm:text-sm tracking-wider">
@@ -166,12 +106,17 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
               </div>
               {cinematic.visorBootStep >= 2 && (
                 <div className="text-[#eef4fb] font-semibold">
-                  &gt; SUBJECT-00: IAN KANE · 최후의 인류 식별 확인
+                  &gt; SUBJECT-00: IAN KANE · 프로젝트 라자루스 코어 동기화
                 </div>
               )}
               {cinematic.visorBootStep >= 3 && (
-                <div className="text-[#e89b3c] font-semibold">
-                  &gt; NEURAL SYNC 100% · 오프라인 전술 HUD 초기화 중...
+                <div className="text-[#2ee6a6] font-semibold">
+                  &gt; ORBITAL LINK: VALKYRIE-01 (UNS 아크라이트) 암호 접속 성공
+                </div>
+              )}
+              {cinematic.visorBootStep >= 4 && (
+                <div className="text-[#f5b342] font-semibold">
+                  &gt; SECTOR ZERO // NEO-SEOUL · 2099.11.24 · 전술 HUD 전개 중...
                 </div>
               )}
             </div>
@@ -179,7 +124,7 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
         </div>
       )}
 
-      {/* 2) ARCADIA AI RGB CHROMATIC ABERRATION GLITCH OVERLAY */}
+      {/* 2) OMNI-CORE RGB CHROMATIC ABERRATION GLITCH OVERLAY */}
       {cinematic.glitchIntensity > 0.02 && (
         <div
           className="fixed inset-0 pointer-events-none animate-glitch-rgb"
@@ -213,7 +158,7 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
         </div>
       )}
 
-      {/* 3) RELAY-2 EMERGENCY CRIMSON STROBE */}
+      {/* 3) EMERGENCY CRIMSON STROBE */}
       {cinematic.emergencyRedOpacity > 0.01 && (
         <div
           className="fixed inset-0 bg-[#c93b3b] pointer-events-none"
@@ -222,18 +167,18 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
         />
       )}
 
-      {/* 4) DAWN SERVER DETONATION WHITEOUT FLASH */}
+      {/* 4) DETONATION FLASH (Balanced warm cinematic peak, non-blinding) */}
       {cinematic.whiteoutOpacity > 0.01 && (
         <div
-          className="fixed inset-0 bg-[#fffaf0] pointer-events-none"
-          style={{ opacity: cinematic.whiteoutOpacity }}
+          className="fixed inset-0 bg-[#f3ead8] pointer-events-none"
+          style={{ opacity: Math.min(0.62, cinematic.whiteoutOpacity * 0.62) }}
           aria-hidden="true"
         />
       )}
 
-      {/* 5) 2.39:1 CINEMATIC LETTERBOX BARS (11vh top & bottom, 0.6s cubic-bezier) */}
+      {/* 5) 2.39:1 CINEMATIC LETTERBOX BARS */}
       <div
-        className="fixed top-0 left-0 right-0 h-[11vh] bg-[#06090f] border-b border-white/[0.08]"
+        className="fixed top-0 left-0 right-0 h-[10.5vh] bg-[#06090f] border-b border-white/[0.08]"
         style={{
           transform: cinematic.letterbox ? 'translateY(0)' : 'translateY(-102%)',
           transition: 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1)',
@@ -241,40 +186,155 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
         data-testid="letterbox-top"
       />
       <div
-        className="fixed bottom-0 left-0 right-0 h-[11vh] bg-[#06090f] border-t border-white/[0.08] flex items-center justify-between px-6 sm:px-10"
+        className="fixed bottom-0 left-0 right-0 h-[10.5vh] bg-[#06090f] border-t border-white/[0.08] flex items-center justify-between px-6 sm:px-10"
         style={{
           transform: cinematic.letterbox ? 'translateY(0)' : 'translateY(102%)',
           transition: 'transform 0.6s cubic-bezier(0.22, 1, 0.36, 1)',
         }}
         data-testid="letterbox-bottom"
       >
-        <div className="text-[10px] font-tactical tracking-[0.26em] text-[#6d798c] uppercase hidden sm:block tabular-nums">
-          IRON ASH // REAL-TIME CINEMATIC FEED ·{' '}
-          {cinematic.sequence === 'opening'
-            ? 'SEQ-00 THE LAST PULSE'
-            : cinematic.sequence === 'breach'
-              ? 'SEQ-02 BREACH PROTOCOL'
-              : cinematic.sequence === 'dawn'
-                ? 'SEQ-03 DAWN'
-                : 'STANDBY'}
+        <div className="text-[10px] font-tactical tracking-[0.26em] text-[#7c889c] uppercase hidden sm:block tabular-nums">
+          IRON ASH III // REAL-TIME CINEMA · {SEQ_LABELS[cinematic.sequence]}
         </div>
         <div />
       </div>
 
-      {/* 6) CALL OF DUTY–STYLE CHAPTER TITLE CARD */}
-      {card && (
+      {/* 6) INTERACTIVE ZERO HOUR 3-ENDING DECISION OVERLAY */}
+      {isChoiceActive && (
+        <div
+          className="fixed inset-0 z-30 flex items-center justify-center px-4 sm:px-8 pointer-events-auto"
+          style={{
+            background:
+              'radial-gradient(ellipse 80% 70% at 50% 50%, rgba(7, 10, 18, 0.42) 0%, rgba(5, 7, 13, 0.84) 100%)',
+          }}
+          data-testid="zero-hour-choice-overlay"
+        >
+          <div className="w-full max-w-5xl max-h-[82vh] overflow-y-auto px-1 py-2 animate-panel-in">
+            <div className="text-center mb-5">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-[3px] bg-[#070b14]/88 border border-[#38d9ff]/45 backdrop-blur-md text-[10px] font-tactical font-bold tracking-[0.22em] text-[#38d9ff] uppercase">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#38d9ff] animate-pulse" />
+                <span>OMNI-CORE MAINFRAME INTERFACE // ZERO HOUR DECISION</span>
+              </div>
+              <h2 className="mt-2.5 font-display text-3xl sm:text-5xl font-extrabold tracking-[0.05em] text-[#f8fafc] game-text-outline">
+                지구와 인류의 최후 결말을 선택하라
+              </h2>
+              <p className="mt-1.5 inline-flex flex-wrap items-center justify-center gap-1.5 text-xs sm:text-sm text-[#cbd5e1] game-text-outline">
+                <Keycap size="xs" tone="amber">
+                  1
+                </Keycap>
+                <Keycap size="xs" tone="emerald">
+                  2
+                </Keycap>
+                <Keycap size="xs" tone="signal">
+                  3
+                </Keycap>
+                <span>또는 아래 프로토콜 카드를 클릭해 최종 엔딩을 집행하십시오</span>
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
+              {endingChoices.map((endId) => {
+                const prof = ENDING_PROFILES[endId];
+                return (
+                  <button
+                    key={endId}
+                    type="button"
+                    data-testid={`choose-ending-${endId}`}
+                    onClick={(e) => {
+                      e.currentTarget.blur();
+                      onChooseEnding(endId);
+                    }}
+                    className="group relative h-full text-left flex flex-col overflow-hidden rounded-[5px] bg-[#0a0e18]/92 backdrop-blur-md border border-white/15 hover:border-white/60 transition-all duration-250 hover:-translate-y-1.5 cursor-pointer"
+                    style={{
+                      borderTop: `2.5px solid ${prof.accentCss}`,
+                      boxShadow: `0 24px 48px -12px rgba(0,0,0,0.88), 0 0 28px -14px ${prof.accentCss}66`,
+                    }}
+                  >
+                    <div className="relative h-28 sm:h-32 w-full overflow-hidden bg-[#07090d]">
+                      <img
+                        src={prof.imageUrl}
+                        alt={prof.title}
+                        className="w-full h-full object-cover object-center opacity-88 group-hover:scale-106 group-hover:opacity-100 transition-all duration-500"
+                      />
+                      <div
+                        className="absolute inset-0"
+                        style={{
+                          background:
+                            'linear-gradient(180deg, rgba(8,10,16,0.16) 0%, rgba(10,14,24,0.96) 100%)',
+                        }}
+                      />
+                      <div className="absolute top-2.5 left-3 right-3 flex items-center justify-between gap-2">
+                        <span
+                          className="px-2 py-0.5 text-[10px] font-tactical font-extrabold rounded-[3px] text-[#07080a] shadow-sm"
+                          style={{ backgroundColor: prof.accentCss }}
+                        >
+                          KEY [{prof.keyHint}]
+                        </span>
+                        <span className="px-2 py-0.5 rounded-[2px] bg-[#070a12]/75 text-[9.5px] font-tactical font-semibold text-[#e2e8f0]">
+                          {prof.choiceTag}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-4 flex-1 flex flex-col justify-between gap-3">
+                      <div>
+                        <div
+                          className="text-[10px] font-tactical font-bold tracking-[0.14em] uppercase"
+                          style={{ color: prof.accentCss }}
+                        >
+                          {prof.code}
+                        </div>
+                        <div className="mt-1 font-display text-xl sm:text-2xl font-bold text-[#f8fafc] leading-tight">
+                          {prof.title}
+                        </div>
+                        <p className="mt-2 text-xs text-[#cbd5e1] leading-relaxed break-keep">
+                          {prof.choiceSummary}
+                        </p>
+                      </div>
+
+                      <div
+                        className="pl-2.5 py-1.5 pr-2 rounded-r-[3px] bg-white/[0.03] border-l-2 text-[11px] text-[#e2e8f0] leading-snug break-keep"
+                        style={{ borderColor: prof.accentCss }}
+                      >
+                        <div className="font-tactical text-[9.5px] text-[#94a3b8] mb-0.5">
+                          {prof.advisorSpeaker}
+                        </div>
+                        {prof.advisorQuote}
+                      </div>
+
+                      <div
+                        className="w-full py-2 text-center font-tactical text-xs font-bold tracking-wider uppercase rounded-[3px] border transition-all group-hover:brightness-115"
+                        style={{
+                          borderColor: `${prof.accentCss}99`,
+                          color: prof.accentCss,
+                          backgroundColor: `${prof.accentCss}18`,
+                        }}
+                      >
+                        프로토콜 집행 [{prof.keyHint}]
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7) CALL OF DUTY–STYLE CHAPTER TITLE CARD */}
+      {card && !isChoiceActive && (
         <div
           key={`card-${card.id}`}
-          className="fixed left-7 sm:left-11 max-w-xl pointer-events-none transition-all duration-300"
+          className="fixed left-6 sm:left-8 max-w-[360px] pointer-events-none transition-all duration-300"
           style={{
-            top: cinematic.letterbox ? '15.5vh' : undefined,
-            bottom: cinematic.letterbox ? undefined : '218px',
+            top: cinematic.letterbox ? '14vh' : undefined,
+            bottom: cinematic.letterbox ? undefined : '188px',
             opacity: card.opacity,
           }}
           data-testid="chapter-title-card"
         >
           <div
-            className="font-tactical text-sm sm:text-base font-extrabold tracking-[0.18em] uppercase game-text-outline tabular-nums"
+            className="font-tactical text-[11px] sm:text-xs font-extrabold tracking-[0.2em] uppercase game-text-outline tabular-nums"
             style={{ color: card.accentCss }}
           >
             {typedActCode}
@@ -283,17 +343,17 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
             )}
           </div>
           <div
-            className="h-[2px] mt-1.5 mb-2 transition-all duration-500"
+            className="h-[2px] mt-1 mb-1.5 transition-all duration-500"
             style={{
               width: `${Math.min(100, Math.max(18, card.visibleChars * 3.6))}%`,
-              maxWidth: '380px',
+              maxWidth: '280px',
               background: `linear-gradient(90deg, ${card.accentCss} 0%, rgba(255,255,255,0.2) 80%, transparent 100%)`,
             }}
           />
-          <div className="font-stencil text-2xl sm:text-3xl tracking-[0.14em] text-[#f3f5f8] leading-none game-text-outline">
+          <div className="font-stencil text-xl sm:text-2xl tracking-[0.12em] text-[#f8fafc] leading-tight game-text-outline break-keep">
             {card.title}
           </div>
-          <div className="mt-1.5 font-tactical text-[11px] sm:text-xs tracking-[0.14em] text-[#cbd3df] game-text-outline tabular-nums">
+          <div className="mt-1 font-tactical text-[10px] sm:text-[10.5px] tracking-[0.12em] text-[#cbd5e1] game-text-outline tabular-nums break-keep">
             {typedMeta}
             {isTyping && typedMeta.length > 0 && (
               <span className="inline-block w-1.5 h-3 ml-1 align-middle bg-white animate-pulse" />
@@ -302,94 +362,82 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
         </div>
       )}
 
-      {/* 7) MOVIE-STYLE BOTTOM-CENTER SUBTITLE BAR */}
-      {comms && cinematic.letterbox && (
-        <div
-          className="fixed left-0 right-0 bottom-[11vh] h-32 pointer-events-none"
-          style={{
-            background:
-              'linear-gradient(to top, rgba(6,9,15,0.84) 0%, rgba(6,9,15,0.34) 55%, transparent 100%)',
-          }}
-          aria-hidden="true"
-        />
-      )}
-      {comms && (
+      {/* 8) CALL OF DUTY–STYLE TACTICAL RADIO SUBTITLE BAR WITH PORTRAIT & VHF WAVEFORM */}
+      {comms && !isChoiceActive && (
         <div
           key={`comms-${comms.id}`}
-          className="fixed left-1/2 -translate-x-1/2 px-4 pointer-events-none transition-all duration-300 animate-comms-enter"
+          className={`fixed left-1/2 -translate-x-1/2 px-4 pointer-events-none transition-all duration-250 animate-comms-enter ${
+            cinematic.letterbox ? 'bottom-[12.2vh]' : 'bottom-6'
+          }`}
           style={{
-            bottom: cinematic.letterbox ? '13.5vh' : '92px',
-            width: cinematic.letterbox ? 'min(92vw, 660px)' : 'min(92vw, 520px)',
+            maxWidth: 'min(92vw, 660px)',
           }}
           data-testid="cinematic-subtitle-bar"
         >
           <div
-            className="relative overflow-hidden px-4 py-3 rounded-lg bg-[#0b0f17]/92 border border-white/[0.09]"
+            className="inline-flex items-center gap-3.5 px-3.5 py-2.5 rounded-[5px] bg-[#060b14]/88 backdrop-blur-md border border-white/[0.12] shadow-[0_14px_36px_rgba(0,0,0,0.82)]"
             style={{
-              boxShadow:
-                comms.sender === 'arcadia'
-                  ? 'inset 0 1px 0 rgba(255,255,255,0.08), 0 14px 36px rgba(0,0,0,0.72), 0 0 24px rgba(220,76,76,0.18)'
-                  : 'inset 0 1px 0 rgba(255,255,255,0.08), 0 14px 36px rgba(0,0,0,0.72)',
+              borderLeft: `3px solid ${comms.accentCss}`,
+              boxShadow: `0 14px 36px rgba(0,0,0,0.82), inset 0 1px 0 rgba(255,255,255,0.08)`,
             }}
           >
-            <div
-              className="absolute left-0 top-0 bottom-0 w-[3px]"
-              style={{ backgroundColor: comms.accentCss }}
-              aria-hidden="true"
-            />
-            <div className="flex items-center justify-between gap-3 mb-1.5 pl-1.5">
-              <div className="flex items-center gap-2.5 min-w-0">
-                {comms.sender === 'holotape' ? (
-                  <SpinningCassetteIcon />
-                ) : (
-                  <LiveWaveformCanvas sender={comms.sender} accentCss={comms.accentCss} />
-                )}
-                <div className="min-w-0">
-                  <div
-                    className="text-[11px] font-tactical font-bold tracking-[0.14em] truncate"
-                    style={{ color: comms.accentCss }}
-                  >
-                    {comms.speaker}
-                  </div>
-                  <div className="text-[10px] font-tactical text-[#8490a3] truncate">
-                    {comms.role}
-                  </div>
-                </div>
-              </div>
-
-              {comms.lineIndex && comms.lineTotal ? (
-                <span className="shrink-0 text-[10px] font-tactical font-bold px-2 py-0.5 rounded bg-[#e89b3c]/15 border border-[#e89b3c]/40 text-[#f6b75e] tabular-nums">
-                  LOG {comms.lineIndex}/{comms.lineTotal}
-                </span>
-              ) : (
+            <div className="relative shrink-0">
+              <img
+                src={getPortraitUrlForComms(comms.sender, comms.speaker)}
+                alt={comms.speaker}
+                className="w-11 h-11 rounded-[4px] object-cover border shadow-md"
+                style={{ borderColor: `${comms.accentCss}99` }}
+              />
+              <span
+                className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full animate-pulse border-2 border-[#060b14]"
+                style={{ backgroundColor: comms.accentCss }}
+              />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2.5">
                 <span
-                  className="shrink-0 text-[9px] font-tactical font-bold tracking-[0.16em] uppercase"
+                  className="font-tactical text-[10.5px] sm:text-[11px] font-extrabold tracking-wide whitespace-nowrap"
                   style={{ color: comms.accentCss }}
                 >
-                  {comms.sender === 'arcadia'
-                    ? 'HOSTILE SIGNAL'
-                    : comms.sender === 'holotape'
-                      ? 'ARCHIVE PLAYBACK'
-                      : 'ENCRYPTED LINK'}
+                  {comms.speaker.split('·')[0].trim()}
+                  {comms.lineIndex && comms.lineTotal ? ` [${comms.lineIndex}/${comms.lineTotal}]` : ''}
                 </span>
-              )}
+                {/* Animated VHF Tactical Signal Waveform */}
+                <span className="inline-flex items-end gap-[2px] h-2.5" aria-hidden="true">
+                  {[0.45, 0.95, 0.65, 1.0, 0.5].map((hScale, idx) => (
+                    <span
+                      key={idx}
+                      className="w-[2px] rounded-full animate-pulse"
+                      style={{
+                        height: `${Math.round(hScale * 10)}px`,
+                        backgroundColor: comms.accentCss,
+                        opacity: 0.85,
+                        animationDelay: `${idx * 110}ms`,
+                        animationDuration: '720ms',
+                      }}
+                    />
+                  ))}
+                </span>
+                <span className="text-[9px] font-tactical tracking-[0.18em] text-white/50 uppercase">
+                  VHF // CH-01
+                </span>
+              </div>
+              <p
+                className="text-xs sm:text-[13.5px] font-medium text-[#f8fafc] leading-snug break-keep mt-0.5"
+                style={
+                  comms.sender === 'arcadia'
+                    ? { textShadow: '-1px 0 rgba(255,68,52,0.55), 1px 0 rgba(56,217,255,0.35)' }
+                    : { textShadow: '0 1px 4px rgba(0,0,0,0.9)' }
+                }
+              >
+                {comms.text}
+              </p>
             </div>
-
-            <p
-              className="text-xs sm:text-[13.5px] font-medium text-[#f3f5f8] leading-relaxed text-center break-keep"
-              style={
-                comms.sender === 'arcadia'
-                  ? { textShadow: '-1px 0 rgba(220,76,76,0.6), 1px 0 rgba(86,194,255,0.4)' }
-                  : { textShadow: '0 2px 6px rgba(0,0,0,0.9)' }
-              }
-            >
-              “{comms.text}”
-            </p>
           </div>
         </div>
       )}
 
-      {/* 8) UNIVERSAL [SPACE] SKIP BUTTON — TACTILE SECONDARY FINISH */}
+      {/* 9) UNIVERSAL [SPACE] SKIP BUTTON */}
       {cinematic.canSkip && (
         <button
           type="button"
@@ -399,11 +447,11 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
             onSkip();
           }}
           data-testid="skip-cinematic-btn"
-          className="fixed bottom-[3.2vh] right-6 sm:right-10 z-30 pointer-events-auto game-btn game-btn-secondary px-3.5 py-2 text-xs font-tactical tracking-wider"
+          className="fixed bottom-[2.6vh] right-6 sm:right-10 z-30 pointer-events-auto game-btn game-btn-secondary px-3.5 py-2 text-xs font-tactical tracking-wider backdrop-blur-md"
         >
-          <span className="px-1.5 py-0.5 rounded bg-[#e89b3c] text-[#110c05] text-[10px] font-extrabold leading-none">
+          <Keycap size="xs" tone="amber">
             SPACE
-          </span>
+          </Keycap>
           <span>건너뛰기</span>
         </button>
       )}

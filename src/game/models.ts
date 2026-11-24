@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { BodyPart, Faction, UnitArchetype } from './types';
 import { FACTION_META } from './rules';
 import { ProceduralTextureSet } from './textures';
+import { ExtendedPbrLibrary } from './pbrMaterials';
 
 export interface ViewmodelRig {
   pivot: THREE.Group;
@@ -14,6 +15,8 @@ export interface ViewmodelRig {
   chargingHandle0: THREE.Object3D;
   railPlasmaCore: THREE.Mesh;
   flamerPilot: THREE.Mesh;
+  teslaCoilRotor: THREE.Group;
+  teslaArcCore: THREE.Mesh;
   muzzleFlash: THREE.Mesh;
   blade: THREE.Group;
 }
@@ -46,7 +49,7 @@ function makeBeveledExtrude(
 }
 
 /**
- * Builds articulated armored human exo-suit forearms & tactical gloved hands gripping the weapon.
+ * Builds articulated 5-finger tactical Kevlar gloved hands gripping the weapon (CoD MWIII silhouette).
  */
 function addExoHands(
   parent: THREE.Group,
@@ -57,82 +60,107 @@ function addExoHands(
   rightHandPos: [number, number, number],
   leftHandPos: [number, number, number]
 ): THREE.Group {
-  // Right trigger hand + angled tactical exo-forearm
+  const buildFingers = (grp: THREE.Group, isRight: boolean) => {
+    for (let i = 0; i < 4; i++) {
+      const fx = -0.026 + i * 0.0175;
+      const isTrigger = isRight && i === 0;
+      const f = new THREE.Mesh(new THREE.CapsuleGeometry(0.0078, 0.032, 5, 8), gloveMat);
+      f.position.set(fx, 0.004, -0.056);
+      f.rotation.x = isTrigger ? Math.PI / 2 - 0.35 : Math.PI / 2 - 1.05;
+      grp.add(f);
+    }
+    const thumb = new THREE.Mesh(new THREE.CapsuleGeometry(0.009, 0.032, 5, 8), gloveMat);
+    thumb.position.set(isRight ? -0.036 : 0.036, 0.014, -0.022);
+    thumb.rotation.set(Math.PI / 2 - 0.35, 0, isRight ? 0.45 : -0.45);
+    grp.add(thumb);
+  };
+
+  // Right trigger hand + 5 articulated fingers + carbon knuckle armor + forearm
   const rGroup = new THREE.Group();
   rGroup.position.set(...rightHandPos);
-  const rPalm = new THREE.Mesh(new THREE.BoxGeometry(0.068, 0.064, 0.088), gloveMat);
+  const rPalm = new THREE.Mesh(new THREE.BoxGeometry(0.068, 0.058, 0.082), gloveMat);
   rGroup.add(rPalm);
-  const rKnuckle = new THREE.Mesh(new THREE.BoxGeometry(0.072, 0.022, 0.044), suitArmor);
-  rKnuckle.position.set(0, 0.028, -0.022);
+  const rKnuckle = new THREE.Mesh(new THREE.BoxGeometry(0.072, 0.02, 0.036), suitArmor);
+  rKnuckle.position.set(0, 0.028, -0.024);
   rGroup.add(rKnuckle);
-  const rCuff = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.052, 0.07, 10), suitArmor);
-  rCuff.rotation.x = Math.PI / 2 + 0.25;
-  rCuff.position.set(0.012, -0.025, 0.095);
+  buildFingers(rGroup, true);
+  const rCuff = new THREE.Mesh(new THREE.CylinderGeometry(0.044, 0.05, 0.064, 12), suitArmor);
+  rCuff.rotation.x = Math.PI / 2 + 0.22;
+  rCuff.position.set(0.012, -0.02, 0.088);
   rGroup.add(rCuff);
-  const rSleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.052, 0.064, 0.36, 10), suitSleeve);
-  rSleeve.rotation.x = Math.PI / 2 + 0.28;
+  const rSleeve = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.064, 0.38, 12), suitSleeve);
+  rSleeve.rotation.x = Math.PI / 2 + 0.26;
   rSleeve.rotation.z = -0.14;
-  rSleeve.position.set(0.055, -0.095, 0.28);
+  rSleeve.position.set(0.052, -0.09, 0.27);
   rGroup.add(rSleeve);
-  const rBiometricLed = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.008, 0.045), accentMat);
-  rBiometricLed.position.set(-0.042, 0.018, 0.095);
-  rGroup.add(rBiometricLed);
   parent.add(rGroup);
 
-  // Left support hand cradling forend + wrist armor plate
+  // Left support hand cradling forend + 5 fingers + tactical chronograph watch
   const lGroup = new THREE.Group();
   lGroup.position.set(...leftHandPos);
-  const lPalm = new THREE.Mesh(new THREE.BoxGeometry(0.076, 0.056, 0.095), gloveMat);
+  const lPalm = new THREE.Mesh(new THREE.BoxGeometry(0.074, 0.052, 0.086), gloveMat);
   lGroup.add(lPalm);
-  const lGuard = new THREE.Mesh(new THREE.BoxGeometry(0.082, 0.02, 0.058), suitArmor);
-  lGuard.position.set(-0.012, -0.022, 0.01);
+  const lGuard = new THREE.Mesh(new THREE.BoxGeometry(0.078, 0.018, 0.042), suitArmor);
+  lGuard.position.set(-0.008, 0.024, -0.016);
   lGroup.add(lGuard);
-  const lForearm = new THREE.Mesh(new THREE.CylinderGeometry(0.048, 0.062, 0.42, 10), suitSleeve);
+  buildFingers(lGroup, false);
+  const lForearm = new THREE.Mesh(new THREE.CylinderGeometry(0.047, 0.062, 0.42, 12), suitSleeve);
   lForearm.rotation.x = Math.PI / 2 + 0.22;
-  lForearm.rotation.z = 0.42;
-  lForearm.position.set(-0.14, -0.09, 0.22);
+  lForearm.rotation.z = 0.4;
+  lForearm.position.set(-0.135, -0.086, 0.22);
   lGroup.add(lForearm);
-  const lWristPlate = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.024, 0.095), suitArmor);
-  lWristPlate.position.set(-0.065, -0.02, 0.09);
-  lWristPlate.rotation.y = 0.35;
-  lGroup.add(lWristPlate);
-  const lVitalStrip = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.007, 0.045), accentMat);
-  lVitalStrip.position.set(-0.065, -0.004, 0.09);
-  lVitalStrip.rotation.y = 0.35;
+  const lWatch = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.012, 12), suitArmor);
+  lWatch.position.set(-0.048, 0.014, 0.078);
+  lGroup.add(lWatch);
+  const lVitalStrip = new THREE.Mesh(new THREE.CircleGeometry(0.014, 10), accentMat);
+  lVitalStrip.rotation.x = -Math.PI / 2;
+  lVitalStrip.position.set(-0.048, 0.021, 0.078);
   lGroup.add(lVitalStrip);
   parent.add(lGroup);
   return lGroup;
 }
 
 /**
- * Builds high-craft sculpted 1st-person weapon viewmodels (14–22 composite parts per weapon)
- * with beveled receivers, fluted barrels, Picatinny rails, holographic reticle glass, cables & armored hands.
+ * Builds high-craft sculpted 1st-person weapon viewmodels with 4-channel PBR (Albedo+Normal+Roughness+AO).
  */
 export function buildViewmodelRig(
   camera: THREE.Camera,
-  textures?: ProceduralTextureSet
+  textures?: ProceduralTextureSet,
+  pbr?: ExtendedPbrLibrary
 ): ViewmodelRig {
   const pivot = new THREE.Group();
   camera.add(pivot);
 
   const gunmetal = new THREE.MeshStandardMaterial({
-    color: 0x3b4250,
-    bumpMap: textures?.gunmetalBump,
+    color: pbr ? 0xffffff : 0x3b4250,
+    map: pbr?.gunmetal.map,
+    normalMap: pbr?.gunmetal.normalMap,
+    normalScale: new THREE.Vector2(0.75, 0.75),
+    roughnessMap: pbr?.gunmetal.roughnessMap,
+    aoMap: pbr?.gunmetal.aoMap,
+    bumpMap: pbr ? undefined : textures?.gunmetalBump,
     bumpScale: 0.012,
-    roughness: 0.28,
+    roughness: pbr ? 0.56 : 0.28,
     metalness: 0.9,
   });
   const darkTitanium = new THREE.MeshStandardMaterial({
-    color: 0x1c2029,
-    bumpMap: textures?.gunmetalBump,
+    color: pbr ? 0xffffff : 0x1c2029,
+    map: pbr?.rokReceiver.map,
+    normalMap: pbr?.rokReceiver.normalMap,
+    normalScale: new THREE.Vector2(0.8, 0.8),
+    roughnessMap: pbr?.rokReceiver.roughnessMap,
+    aoMap: pbr?.rokReceiver.aoMap,
+    bumpMap: pbr ? undefined : textures?.gunmetalBump,
     bumpScale: 0.01,
-    roughness: 0.38,
+    roughness: pbr ? 0.62 : 0.38,
     metalness: 0.84,
   });
   const polymer = new THREE.MeshStandardMaterial({
     color: 0x15171d,
-    roughness: 0.78,
-    metalness: 0.16,
+    normalMap: pbr?.kevlarGlove.normalMap,
+    normalScale: new THREE.Vector2(0.35, 0.35),
+    roughness: 0.82,
+    metalness: 0.14,
   });
   const chrome = new THREE.MeshStandardMaterial({
     color: 0xb6c0d0,
@@ -141,8 +169,8 @@ export function buildViewmodelRig(
   });
   const brass = new THREE.MeshStandardMaterial({
     color: 0xd4a442,
-    roughness: 0.24,
-    metalness: 0.92,
+    roughness: 0.22,
+    metalness: 0.94,
   });
   const hazardOrange = new THREE.MeshStandardMaterial({
     color: 0xd9531e,
@@ -150,10 +178,11 @@ export function buildViewmodelRig(
     metalness: 0.45,
   });
   const militaryOlive = new THREE.MeshStandardMaterial({
-    color: 0x364334,
-    bumpMap: textures?.armorPlateBump,
-    bumpScale: 0.015,
-    roughness: 0.62,
+    color: pbr ? 0xffffff : 0x364334,
+    map: pbr?.k808Armor.map,
+    normalMap: pbr?.k808Armor.normalMap,
+    roughnessMap: pbr?.k808Armor.roughnessMap,
+    roughness: 0.72,
     metalness: 0.38,
   });
   const fuelRed = new THREE.MeshStandardMaterial({
@@ -167,34 +196,45 @@ export function buildViewmodelRig(
     metalness: 0.08,
   });
   const suitArmor = new THREE.MeshStandardMaterial({
-    color: 0x2e3440,
-    bumpMap: textures?.gunmetalBump,
-    bumpScale: 0.014,
-    roughness: 0.36,
-    metalness: 0.78,
+    color: 0x262c38,
+    normalMap: pbr?.kevlarGlove.normalMap,
+    normalScale: new THREE.Vector2(0.45, 0.45),
+    roughness: 0.38,
+    metalness: 0.72,
   });
   const suitSleeve = new THREE.MeshStandardMaterial({
-    color: 0x1c1e24,
-    roughness: 0.85,
-    metalness: 0.12,
+    color: 0x1f242c,
+    normalMap: pbr?.kevlarGlove.normalMap,
+    normalScale: new THREE.Vector2(0.55, 0.55),
+    roughness: 0.88,
+    metalness: 0.1,
   });
   const gloveMat = new THREE.MeshStandardMaterial({
-    color: 0x121318,
-    roughness: 0.9,
+    color: pbr ? 0xffffff : 0x121318,
+    map: pbr?.kevlarGlove.map,
+    normalMap: pbr?.kevlarGlove.normalMap,
+    normalScale: new THREE.Vector2(0.95, 0.95),
+    roughnessMap: pbr?.kevlarGlove.roughnessMap,
+    roughness: 0.92,
     metalness: 0.08,
   });
-  const cyanGlow = new THREE.MeshBasicMaterial({ color: 0x38e8ff });
-  const amberGlow = new THREE.MeshBasicMaterial({ color: 0xffa62b });
-  const emeraldGlow = new THREE.MeshBasicMaterial({ color: 0x34d399 });
-  const crimsonGlow = new THREE.MeshBasicMaterial({ color: 0xff2a4b });
-  const holoGlass = new THREE.MeshPhysicalMaterial({
-    color: 0x5be4ff,
-    roughness: 0.08,
-    metalness: 0.1,
+  const cyanGlow = new THREE.MeshBasicMaterial({ color: 0x22b8db });
+  const amberGlow = new THREE.MeshBasicMaterial({ color: 0xd98726 });
+  const emeraldGlow = new THREE.MeshBasicMaterial({ color: 0x24b885 });
+  const crimsonGlow = new THREE.MeshBasicMaterial({ color: 0xd92b48 });
+  // Truly crystal-clear optical glass (zero milky RoomEnvironment clearcoat glare — looks like real CoD EOTech!)
+  const holoGlass = new THREE.MeshBasicMaterial({
+    color: 0xdff6ff,
     transparent: true,
-    opacity: 0.22,
-    clearcoat: 1.0,
+    opacity: 0.022,
     depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  const scopeInnerMat = new THREE.MeshStandardMaterial({
+    color: 0x0b0e14,
+    roughness: 0.72,
+    metalness: 0.55,
+    side: THREE.DoubleSide,
   });
 
   const weapons: THREE.Group[] = [];
@@ -297,41 +337,42 @@ export function buildViewmodelRig(
   foregrip0.rotation.x = 0.24;
   g0.add(foregrip0);
 
-  // Sculpted Holographic Optic Housing + Real Glass Lens + Projected Reticle
+  // Sculpted Open Reflex Holographic Optic — Wide Unobstructed Crystal-Clear Window at exact y = +0.124
   const holoGroup0 = new THREE.Group();
-  holoGroup0.position.set(0, 0.118, 0.02);
-  const holoFoot = new THREE.Mesh(new THREE.BoxGeometry(0.072, 0.024, 0.118), darkTitanium);
-  holoFoot.position.y = -0.03;
+  holoGroup0.position.set(0, 0.124, 0.01);
+  const holoFoot = new THREE.Mesh(new THREE.BoxGeometry(0.068, 0.018, 0.114), darkTitanium);
+  holoFoot.position.y = -0.036;
   holoGroup0.add(holoFoot);
   const holoHoodGeo = makeBeveledExtrude(
     [
-      [-0.042, -0.024],
-      [-0.034, 0.036],
-      [0.034, 0.036],
-      [0.042, -0.024],
-      [0.03, -0.024],
-      [0.025, 0.024],
-      [-0.025, 0.024],
-      [-0.03, -0.024],
+      [-0.046, -0.03],
+      [-0.041, 0.036],
+      [0.041, 0.036],
+      [0.046, -0.03],
+      [0.038, -0.03],
+      [0.034, 0.029],
+      [-0.034, 0.029],
+      [-0.038, -0.03],
     ],
-    0.09,
-    0.004,
-    0.004
+    0.072,
+    0.0025,
+    0.0025
   );
   holoGroup0.add(new THREE.Mesh(holoHoodGeo, gunmetal));
-  const holoLens = new THREE.Mesh(new THREE.PlaneGeometry(0.056, 0.046), holoGlass);
-  holoLens.position.set(0, 0.004, 0);
+  const holoLens = new THREE.Mesh(new THREE.PlaneGeometry(0.068, 0.056), holoGlass);
+  holoLens.position.set(0, 0, 0);
   holoGroup0.add(holoLens);
   if (textures?.holoReticleMap) {
     const retMat = new THREE.MeshBasicMaterial({
       map: textures.holoReticleMap,
       transparent: true,
+      opacity: 0.94,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
       side: THREE.DoubleSide,
     });
-    const retMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.042, 0.042), retMat);
-    retMesh.position.set(0, 0.004, 0.002);
+    const retMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.036, 0.036), retMat);
+    retMesh.position.set(0, 0, -0.006);
     holoGroup0.add(retMesh);
   }
   g0.add(holoGroup0);
@@ -489,14 +530,69 @@ export function buildViewmodelRig(
     const hose = new THREE.Mesh(new THREE.TubeGeometry(curve, 12, 0.01, 6, false), polymer);
     g2.add(hose);
   }
-  // Long-range cyber optical scope
-  const scope2 = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.032, 0.34, 12), gunmetal);
-  scope2.rotation.x = Math.PI / 2;
-  scope2.position.set(0, 0.128, -0.05);
-  g2.add(scope2);
-  const scopeGlass2 = new THREE.Mesh(new THREE.CircleGeometry(0.029, 12), holoGlass);
-  scopeGlass2.position.set(0, 0.128, 0.122);
-  g2.add(scopeGlass2);
+  // GENUINE HOLLOW OPEN-ENDED TRANSPARENT 2.8x TACTICAL SNIPER SCOPE at exact y = +0.132
+  const scopeGroup2 = new THREE.Group();
+  scopeGroup2.position.set(0, 0.132, -0.06);
+  // Twin machined Picatinny scope mounting stanchions
+  for (const mz of [-0.075, 0.055]) {
+    const mount = new THREE.Mesh(new THREE.BoxGeometry(0.034, 0.042, 0.024), darkTitanium);
+    mount.position.set(0, -0.046, mz);
+    scopeGroup2.add(mount);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.044, 0.006, 8, 20), darkTitanium);
+    ring.position.set(0, 0, mz);
+    scopeGroup2.add(ring);
+  }
+  // Open-ended hollow outer scope barrel (truly see-through from eyepiece to objective!)
+  const scopeTube2 = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.043, 0.039, 0.28, 24, 1, true),
+    scopeInnerMat
+  );
+  scopeTube2.rotation.x = Math.PI / 2;
+  scopeGroup2.add(scopeTube2);
+  // Flared hollow front sunshade objective bell
+  const scopeBell2 = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.049, 0.043, 0.08, 24, 1, true),
+    gunmetal
+  );
+  scopeBell2.material = scopeInnerMat;
+  scopeBell2.rotation.x = Math.PI / 2;
+  scopeBell2.position.z = -0.175;
+  scopeGroup2.add(scopeBell2);
+  // Rear ocular bezel ring & front objective rim
+  const rearBezel2 = new THREE.Mesh(new THREE.TorusGeometry(0.040, 0.0055, 8, 24), gunmetal);
+  rearBezel2.position.z = 0.14;
+  scopeGroup2.add(rearBezel2);
+  const frontBezel2 = new THREE.Mesh(new THREE.TorusGeometry(0.049, 0.005, 8, 24), gunmetal);
+  frontBezel2.position.z = -0.214;
+  scopeGroup2.add(frontBezel2);
+  // Precision elevation & windage adjustment turrets
+  const elevTurret2 = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.014, 0.022, 10), chrome);
+  elevTurret2.position.set(0, 0.052, -0.01);
+  scopeGroup2.add(elevTurret2);
+  const windTurret2 = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.012, 0.02, 10), chrome);
+  windTurret2.rotation.z = Math.PI / 2;
+  windTurret2.position.set(0.05, 0, -0.01);
+  scopeGroup2.add(windTurret2);
+  // Crystal-clear front & rear AR-coated glass lenses + crisp internal etched Mil-Dot reticle
+  const scopeGlassRear2 = new THREE.Mesh(new THREE.CircleGeometry(0.037, 24), holoGlass);
+  scopeGlassRear2.position.set(0, 0, 0.132);
+  scopeGroup2.add(scopeGlassRear2);
+  const scopeGlassFront2 = new THREE.Mesh(new THREE.CircleGeometry(0.045, 24), holoGlass);
+  scopeGlassFront2.position.set(0, 0, -0.205);
+  scopeGroup2.add(scopeGlassFront2);
+  if (textures?.sniperReticleMap) {
+    const snipeRetMat = new THREE.MeshBasicMaterial({
+      map: textures.sniperReticleMap,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const snipeRetMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.072, 0.072), snipeRetMat);
+    snipeRetMesh.position.set(0, 0, 0.01);
+    scopeGroup2.add(snipeRetMesh);
+  }
+  g2.add(scopeGroup2);
   const cell2 = new THREE.Mesh(
     new THREE.BoxGeometry(0.072, 0.14, 0.11),
     new THREE.MeshStandardMaterial({ color: 0x0e7490, roughness: 0.25, metalness: 0.82 })
@@ -536,6 +632,42 @@ export function buildViewmodelRig(
   laserEye3.rotation.x = Math.PI / 2;
   laserEye3.position.set(-0.115, 0.065, -0.295);
   g3.add(laserEye3);
+  // Open Top-Mounted Transparent Smart Ballistic Optic at exact y = +0.152
+  const launcherOptic3 = new THREE.Group();
+  launcherOptic3.position.set(0, 0.152, -0.14);
+  const optBase3 = new THREE.Mesh(new THREE.BoxGeometry(0.074, 0.022, 0.1), darkTitanium);
+  optBase3.position.y = -0.038;
+  launcherOptic3.add(optBase3);
+  const optHood3Geo = makeBeveledExtrude(
+    [
+      [-0.048, -0.03],
+      [-0.044, 0.034],
+      [0.044, 0.034],
+      [0.048, -0.03],
+      [0.040, -0.03],
+      [0.037, 0.027],
+      [-0.037, 0.027],
+      [-0.040, -0.03],
+    ],
+    0.058,
+    0.0025,
+    0.0025
+  );
+  launcherOptic3.add(new THREE.Mesh(optHood3Geo, darkTitanium));
+  launcherOptic3.add(new THREE.Mesh(new THREE.PlaneGeometry(0.074, 0.054), holoGlass));
+  if (textures?.arcOpticReticleMap) {
+    const rMat3 = new THREE.MeshBasicMaterial({
+      map: textures.arcOpticReticleMap,
+      transparent: true,
+      opacity: 0.9,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const rMesh3 = new THREE.Mesh(new THREE.PlaneGeometry(0.052, 0.052), rMat3);
+    rMesh3.position.z = -0.005;
+    launcherOptic3.add(rMesh3);
+  }
+  g3.add(launcherOptic3);
   const warhead3 = new THREE.Mesh(new THREE.ConeGeometry(0.068, 0.22, 10), brass);
   warhead3.rotation.x = -Math.PI / 2;
   warhead3.position.set(0, 0.02, -0.65);
@@ -588,6 +720,119 @@ export function buildViewmodelRig(
   leftHands.push(lHand4);
   leftHandBasePos.push(lHand4.position.clone());
 
+  // =========================================================================
+  // [6] ZEUS-MK7 CHAIN ARC TESLA CANNON (Rotating copper-cyan coils, twin discharge prongs, arc cell)
+  // =========================================================================
+  const g5 = new THREE.Group();
+  const rec5Geo = makeBeveledExtrude(
+    [
+      [-0.22, -0.06],
+      [0.24, -0.06],
+      [0.27, 0.02],
+      [0.18, 0.072],
+      [-0.20, 0.072],
+    ],
+    0.115,
+    0.01,
+    0.01
+  );
+  rec5Geo.rotateY(Math.PI / 2);
+  g5.add(new THREE.Mesh(rec5Geo, darkTitanium));
+
+  const teslaCoilRotor = new THREE.Group();
+  teslaCoilRotor.position.set(0, 0.026, -0.42);
+  const copperMat = new THREE.MeshStandardMaterial({
+    color: 0xd97736,
+    roughness: 0.24,
+    metalness: 0.94,
+  });
+  for (let i = 0; i < 3; i++) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.068 - i * 0.008, 0.012, 8, 16), copperMat);
+    ring.position.z = 0.14 - i * 0.16;
+    teslaCoilRotor.add(ring);
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.15 - i * 0.015, 0.024), chrome);
+    fin.position.z = 0.14 - i * 0.16;
+    fin.rotation.z = (i * Math.PI) / 3;
+    teslaCoilRotor.add(fin);
+  }
+  g5.add(teslaCoilRotor);
+
+  const teslaArcCore = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.022, 0.016, 0.62, 10),
+    new THREE.MeshBasicMaterial({ color: 0x38e8ff })
+  );
+  teslaArcCore.rotation.x = Math.PI / 2;
+  teslaArcCore.position.set(0, 0.026, -0.44);
+  g5.add(teslaArcCore);
+
+  // Twin brass/chrome arc emitter prongs at front
+  for (const sx of [-0.048, 0.048]) {
+    const prong = new THREE.Mesh(new THREE.ConeGeometry(0.014, 0.22, 6), chrome);
+    prong.rotation.x = -Math.PI / 2;
+    prong.position.set(sx, 0.026, -0.78);
+    g5.add(prong);
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.015, 8, 8), cyanGlow);
+    tip.position.set(sx, 0.026, -0.88);
+    g5.add(tip);
+  }
+
+  // Side detachable high-voltage arc capacitor cell
+  const cell5 = new THREE.Group();
+  cell5.position.set(0.088, 0.022, -0.08);
+  const cellBody5 = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.22, 10), gunmetal);
+  cellBody5.rotation.x = Math.PI / 2;
+  cell5.add(cellBody5);
+  const cellGlow5 = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.09, 10), cyanGlow);
+  cellGlow5.rotation.x = Math.PI / 2;
+  cell5.add(cellGlow5);
+  g5.add(cell5);
+
+  // Open Top-Mounted Transparent Arc-Targeting Reflex Prism Optic at exact y = +0.124
+  const teslaOptic5 = new THREE.Group();
+  teslaOptic5.position.set(0, 0.124, -0.02);
+  const tBase5 = new THREE.Mesh(new THREE.BoxGeometry(0.066, 0.02, 0.092), darkTitanium);
+  tBase5.position.y = -0.036;
+  teslaOptic5.add(tBase5);
+  const tHood5Geo = makeBeveledExtrude(
+    [
+      [-0.044, -0.028],
+      [-0.036, 0.034],
+      [0.036, 0.034],
+      [0.044, -0.028],
+      [0.037, -0.028],
+      [0.030, 0.028],
+      [-0.030, 0.028],
+      [-0.037, -0.028],
+    ],
+    0.054,
+    0.002,
+    0.002
+  );
+  teslaOptic5.add(new THREE.Mesh(tHood5Geo, gunmetal));
+  teslaOptic5.add(new THREE.Mesh(new THREE.PlaneGeometry(0.066, 0.054), holoGlass));
+  if (textures?.arcOpticReticleMap) {
+    const rMat5 = new THREE.MeshBasicMaterial({
+      map: textures.arcOpticReticleMap,
+      transparent: true,
+      opacity: 0.92,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const rMesh5 = new THREE.Mesh(new THREE.PlaneGeometry(0.048, 0.048), rMat5);
+    rMesh5.position.z = -0.005;
+    teslaOptic5.add(rMesh5);
+  }
+  g5.add(teslaOptic5);
+
+  const lHand5 = addExoHands(g5, suitArmor, suitSleeve, gloveMat, cyanGlow, [0.02, -0.11, 0.14], [-0.03, -0.08, -0.34]);
+  pivot.add(g5);
+  weapons.push(g5);
+  magazines.push(cell5);
+  magBasePos.push(cell5.position.clone());
+  magBaseRot.push(cell5.rotation.clone());
+  leftHands.push(lHand5);
+  leftHandBasePos.push(lHand5.position.clone());
+
   // Muzzle flash volumetric core
   const muzzleFlash = new THREE.Mesh(
     new THREE.OctahedronGeometry(0.14, 0),
@@ -633,6 +878,8 @@ export function buildViewmodelRig(
     chargingHandle0,
     railPlasmaCore: plasmaCore2,
     flamerPilot: pilot4,
+    teslaCoilRotor,
+    teslaArcCore,
     muzzleFlash,
     blade,
   };
@@ -640,10 +887,14 @@ export function buildViewmodelRig(
 
 export interface EnemyRig {
   root: THREE.Group;
-  parts: Partial<Record<BodyPart, THREE.Mesh>>;
+  parts: Partial<Record<BodyPart, THREE.Object3D>>;
+  knees?: { left?: THREE.Object3D; right?: THREE.Object3D };
+  elbows?: { left?: THREE.Object3D; right?: THREE.Object3D };
   mats: THREE.MeshStandardMaterial[];
+  visorMat: THREE.MeshBasicMaterial;
   gatlingBarrel?: THREE.Object3D;
   sawBlade?: THREE.Object3D;
+  sniperLaser?: THREE.Mesh;
   contactShadow: THREE.Mesh;
 }
 
@@ -755,6 +1006,8 @@ export function buildEnemyModel(
 
   let gatlingBarrel: THREE.Object3D | undefined;
   let sawBlade: THREE.Object3D | undefined;
+  let sniperLaser: THREE.Mesh | undefined;
+  const isSniper = archetype === UnitArchetype.SYNDICATE_SNIPER;
 
   if (isStalker) {
     // =========================================================================
@@ -945,39 +1198,44 @@ export function buildEnemyModel(
     head.add(jaw);
 
     // =========================================================================
-    // ARTICULATED HYDRAULIC ARMS + CYBERNETIC WEAPONS
+    // ARTICULATED HYDRAULIC ARMS + CYBERNETIC WEAPONS (TRUE SHOULDER PIVOTS!)
     // =========================================================================
     const buildArm = (sx: number, part: BodyPart, zOff: number): THREE.Mesh => {
+      const armGeo = new THREE.CylinderGeometry(0.1 * s, 0.085 * s, 0.66 * s, 10);
+      armGeo.translate(0, -0.33 * s, 0);
       const arm = makePart(
         part,
-        new THREE.CylinderGeometry(0.1 * s, 0.085 * s, 0.66 * s, 8),
+        armGeo,
         limbMat,
         sx * (torsoW * 0.64 + 0.1) * s,
-        0.0 * s,
+        0.26 * s,
         zOff * s,
         torso
       );
-      const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.1 * s, 8, 8), chromeJointMat);
-      elbow.position.y = -0.02 * s;
+      const shoulderCap = new THREE.Mesh(new THREE.SphereGeometry(0.115 * s, 10, 8), armorMat);
+      tagSub(shoulderCap, part);
+      arm.add(shoulderCap);
+      const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.098 * s, 8, 8), chromeJointMat);
+      elbow.position.y = -0.33 * s;
       tagSub(elbow, part);
       arm.add(elbow);
       const gauntlet = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.115 * s, 0.095 * s, 0.28 * s, 6),
+        new THREE.CylinderGeometry(0.112 * s, 0.092 * s, 0.28 * s, 8),
         armorMat
       );
-      gauntlet.position.y = -0.2 * s;
+      gauntlet.position.y = -0.52 * s;
       tagSub(gauntlet, part);
       arm.add(gauntlet);
       return arm;
     };
 
-    buildArm(-1, 'leftArm', 0.08);
-    const rArm = buildArm(1, 'rightArm', 0.16);
+    buildArm(-1, 'leftArm', 0.04);
+    const rArm = buildArm(1, 'rightArm', 0.1);
 
     if (isBoss) {
       // OMNI-TITAN 6-barrel rotary plasma cannon + glowing chest reactor + 3 beveled armor plates
       const gatling = new THREE.Group();
-      gatling.position.set(0, -0.14 * s, 0.56 * s);
+      gatling.position.set(0, -0.44 * s, 0.56 * s);
       const housing = new THREE.Mesh(new THREE.CylinderGeometry(0.18 * s, 0.18 * s, 0.28 * s, 10), plateMat);
       housing.rotation.x = Math.PI / 2;
       housing.position.z = -0.32 * s;
@@ -1038,50 +1296,86 @@ export function buildEnemyModel(
         torso
       );
     } else {
-      // Detailed composite AI plasma/ballistic carbine held by right arm
-      const gunLen = archetype === UnitArchetype.SYNDICATE_HEAVY ? 0.88 : 0.68;
+      // Detailed composite AI plasma/ballistic carbine or long sniper rail held by right arm
+      const gunLen = isSniper
+        ? 1.24
+        : archetype === UnitArchetype.SYNDICATE_HEAVY
+          ? 0.88
+          : 0.68;
       const gunGroup = new THREE.Group();
-      gunGroup.position.set(0, -0.18 * s, 0.38 * s);
+      gunGroup.position.set(0, -0.48 * s, (isSniper ? 0.56 : 0.38) * s);
       const body = new THREE.Mesh(new THREE.BoxGeometry(0.1 * s, 0.13 * s, gunLen * s), darkIron);
       gunGroup.add(body);
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.026 * s, 0.026 * s, gunLen * 0.6 * s, 8), chromeJointMat);
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.026 * s, 0.026 * s, gunLen * 0.65 * s, 8), chromeJointMat);
       barrel.rotation.x = Math.PI / 2;
       barrel.position.set(0, 0.03 * s, gunLen * 0.45 * s);
       gunGroup.add(barrel);
-      const muzzleGlow = new THREE.Mesh(new THREE.BoxGeometry(0.032 * s, 0.028 * s, gunLen * 0.55 * s), visorMat);
+      const muzzleGlow = new THREE.Mesh(
+        new THREE.BoxGeometry(0.032 * s, 0.028 * s, gunLen * 0.55 * s),
+        isSniper ? new THREE.MeshBasicMaterial({ color: 0xff2244 }) : visorMat
+      );
       muzzleGlow.position.set(0, 0.055 * s, 0.05 * s);
       gunGroup.add(muzzleGlow);
+
+      if (isSniper) {
+        const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.045 * s, 0.04 * s, 0.42 * s, 8), chromeJointMat);
+        scope.rotation.x = Math.PI / 2;
+        scope.position.set(0, 0.13 * s, 0.04 * s);
+        gunGroup.add(scope);
+
+        // Volumetric laser sight beam (toggled & stretched dynamically by engine during lock-on)
+        const laserGeo = new THREE.CylinderGeometry(0.014, 0.014, 1, 6, 1, true);
+        laserGeo.rotateX(Math.PI / 2);
+        laserGeo.translate(0, 0, 0.5);
+        const laserMat = new THREE.MeshBasicMaterial({
+          color: 0xff1e42,
+          transparent: true,
+          opacity: 0.72,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        });
+        sniperLaser = new THREE.Mesh(laserGeo, laserMat);
+        sniperLaser.position.set(0, 0.04 * s, gunLen * 0.8 * s);
+        sniperLaser.visible = false;
+        gunGroup.add(sniperLaser);
+      }
+
       tagSub(gunGroup, 'rightArm');
       rArm.add(gunGroup);
     }
 
     // =========================================================================
-    // ARTICULATED BIPEDAL HYDRAULIC LEGS (Thigh armor + knee joint + armored shin + clawed mech foot)
+    // ARTICULATED BIPEDAL HYDRAULIC LEGS (TRUE HIP SOCKET PIVOTS — ZERO DETACHMENT!)
     // =========================================================================
     for (const sx of [-1, 1]) {
       const legPart: BodyPart = sx < 0 ? 'leftLeg' : 'rightLeg';
+      const legGeo = new THREE.CylinderGeometry(0.115 * s, 0.095 * s, 0.82 * s, 10);
+      legGeo.translate(0, -0.41 * s, 0);
       const leg = makePart(
         legPart,
-        new THREE.CylinderGeometry(0.115 * s, 0.095 * s, 0.82 * s, 8),
+        legGeo,
         limbMat,
         sx * 0.21 * s,
-        0.41 * s,
+        0.82 * s,
         0,
         root
       );
-      const knee = new THREE.Mesh(new THREE.SphereGeometry(0.115 * s, 8, 8), chromeJointMat);
-      knee.position.set(0, 0.04 * s, 0.06 * s);
+      const hipBall = new THREE.Mesh(new THREE.SphereGeometry(0.11 * s, 8, 8), chromeJointMat);
+      tagSub(hipBall, legPart);
+      leg.add(hipBall);
+      const knee = new THREE.Mesh(new THREE.SphereGeometry(0.112 * s, 8, 8), chromeJointMat);
+      knee.position.set(0, -0.37 * s, 0.06 * s);
       tagSub(knee, legPart);
       leg.add(knee);
       const shinGuard = new THREE.Mesh(
         new THREE.BoxGeometry(0.18 * s, 0.38 * s, 0.16 * s),
         armorMat
       );
-      shinGuard.position.set(0, -0.16 * s, 0.06 * s);
+      shinGuard.position.set(0, -0.57 * s, 0.06 * s);
       tagSub(shinGuard, legPart);
       leg.add(shinGuard);
       const foot = new THREE.Mesh(new THREE.BoxGeometry(0.22 * s, 0.11 * s, 0.34 * s), darkIron);
-      foot.position.set(0, -0.37 * s, 0.08 * s);
+      foot.position.set(0, -0.78 * s, 0.08 * s);
       tagSub(foot, legPart);
       leg.add(foot);
     }
@@ -1107,8 +1401,10 @@ export function buildEnemyModel(
     root,
     parts,
     mats: [armorMat, limbMat, headMat, plateMat],
+    visorMat,
     gatlingBarrel,
     sawBlade,
+    sniperLaser,
     contactShadow,
   };
 }
@@ -1242,4 +1538,587 @@ export function buildRuinedVehicleWreck(
     }
   }
   return g;
+}
+
+export interface DefenseTurretRig {
+  root: THREE.Group;
+  head: THREE.Group;
+  statusMat: THREE.MeshBasicMaterial;
+  beaconRing: THREE.Mesh;
+}
+
+/**
+ * Hackable Ghost-9 Automated Dual-Barrel Defense Turret.
+ * Starts offline (amber lock), flips to glowing electric teal when hacked by the player [F].
+ */
+export function buildDefenseTurretModel(
+  armorMat: THREE.Material,
+  darkIron: THREE.Material
+): DefenseTurretRig {
+  const root = new THREE.Group();
+
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 1.25, 1.05, 8), armorMat);
+  base.position.y = 0.52;
+  base.castShadow = true;
+  base.receiveShadow = true;
+  root.add(base);
+
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.48, 0.55, 8), darkIron);
+  neck.position.y = 1.28;
+  root.add(neck);
+
+  const head = new THREE.Group();
+  head.position.y = 1.72;
+
+  const pod = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.58, 1.15), armorMat);
+  pod.castShadow = true;
+  head.add(pod);
+
+  const chromeMat = new THREE.MeshStandardMaterial({ color: 0xb6c0d0, roughness: 0.2, metalness: 0.94 });
+  for (const sx of [-0.26, 0.26]) {
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.09, 1.35, 8), chromeMat);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(sx, 0.02, 0.92);
+    head.add(barrel);
+  }
+
+  const statusMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.16, 0.12), statusMat);
+  visor.position.set(0, 0.16, 0.56);
+  head.add(visor);
+
+  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.035, 0.72, 6), chromeMat);
+  antenna.position.set(-0.36, 0.6, -0.32);
+  head.add(antenna);
+  const beaconTip = new THREE.Mesh(new THREE.SphereGeometry(0.085, 8, 8), statusMat);
+  beaconTip.position.set(-0.36, 0.98, -0.32);
+  head.add(beaconTip);
+
+  root.add(head);
+
+  const beaconRing = new THREE.Mesh(
+    new THREE.RingGeometry(1.5, 1.78, 24),
+    new THREE.MeshBasicMaterial({
+      color: 0xf59e0b,
+      transparent: true,
+      opacity: 0.55,
+      side: THREE.DoubleSide,
+    })
+  );
+  beaconRing.rotation.x = -Math.PI / 2;
+  beaconRing.position.y = 0.05;
+  root.add(beaconRing);
+
+  return { root, head, statusMat, beaconRing };
+}
+
+/**
+ * Valkyrie UNS Arclight Tactical Orbital Supply Drop Pod with green rescue signal pillar.
+ */
+export function buildSupplyPodModel(
+  armorMat: THREE.Material,
+  darkIron: THREE.Material
+): THREE.Group {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.68, 0.92, 1.85, 6), armorMat);
+  body.position.y = 0.94;
+  body.castShadow = true;
+  g.add(body);
+
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(0.7, 0.55, 6), darkIron);
+  cap.position.y = 2.12;
+  g.add(cap);
+
+  const emeraldGlow = new THREE.MeshBasicMaterial({ color: 0x34d399 });
+  for (let i = 0; i < 3; i++) {
+    const ang = (i / 3) * Math.PI * 2;
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.2, 0.14), emeraldGlow);
+    strip.position.set(Math.cos(ang) * 0.78, 0.95, Math.sin(ang) * 0.78);
+    g.add(strip);
+  }
+
+  const flare = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.16, 0.52, 14, 10, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: 0x34d399,
+      transparent: true,
+      opacity: 0.28,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+  flare.position.y = 7.0;
+  g.add(flare);
+
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(1.15, 1.48, 20),
+    new THREE.MeshBasicMaterial({
+      color: 0x34d399,
+      transparent: true,
+      opacity: 0.72,
+      side: THREE.DoubleSide,
+    })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.06;
+  g.add(ring);
+
+  return g;
+}
+
+/**
+ * Ambient cyberpunk megacity aerial patrol flyer (Blade Runner / GTA traffic atmosphere).
+ */
+export function buildCityFlyerModel(accentHex: number): THREE.Group {
+  const g = new THREE.Group();
+  const hullMat = new THREE.MeshStandardMaterial({ color: 0x161c28, roughness: 0.35, metalness: 0.86 });
+  const accentMat = new THREE.MeshBasicMaterial({ color: accentHex });
+  const headlightMat = new THREE.MeshBasicMaterial({ color: 0xf4f8ff });
+
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.55, 4.2), hullMat);
+  g.add(hull);
+  const canopy = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.32, 1.7), accentMat);
+  canopy.position.set(0, 0.28, 0.4);
+  g.add(canopy);
+  for (const sx of [-0.62, 0.62]) {
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.16, 0.15), headlightMat);
+    head.position.set(sx, -0.05, 2.12);
+    g.add(head);
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.14, 0.16), accentMat);
+    tail.position.set(sx, -0.02, -2.14);
+    g.add(tail);
+  }
+  // Soft volumetric searchlight cone pointing downward
+  const cone = new THREE.Mesh(
+    new THREE.ConeGeometry(2.6, 15, 10, 1, true),
+    new THREE.MeshBasicMaterial({
+      color: accentHex,
+      transparent: true,
+      opacity: 0.055,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    })
+  );
+  cone.position.set(0, -7.8, 1.4);
+  cone.rotation.x = 0.22;
+  g.add(cone);
+
+  return g;
+}
+
+/**
+ * Valkyrie UNS Arclight Friendly Rescue / Orbital Gunship (Emerald-Cyan markings & blue thrusters).
+ */
+export function buildRescueShuttleModel(): THREE.Group {
+  const group = new THREE.Group();
+  const hullMat = new THREE.MeshStandardMaterial({ color: 0x263140, roughness: 0.3, metalness: 0.85 });
+  const trimMat = new THREE.MeshStandardMaterial({ color: 0x0f766e, roughness: 0.35, metalness: 0.72 });
+  const cyanMat = new THREE.MeshBasicMaterial({ color: 0x38e8ff });
+  const emeraldMat = new THREE.MeshBasicMaterial({ color: 0x34d399 });
+
+  const fuselageGeo = makeBeveledExtrude(
+    [
+      [-2.0, -0.85],
+      [2.0, -0.85],
+      [2.35, 0.12],
+      [1.35, 1.05],
+      [-1.35, 1.05],
+      [-2.35, 0.12],
+    ],
+    8.2,
+    0.15,
+    0.15
+  );
+  group.add(new THREE.Mesh(fuselageGeo, hullMat));
+
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(2.0, 3.4, 6), trimMat);
+  nose.rotation.x = Math.PI / 2;
+  nose.scale.set(1.08, 0.55, 1);
+  nose.position.set(0, -0.05, 5.4);
+  group.add(nose);
+
+  const cockpit = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.36, 0.45), cyanMat);
+  cockpit.position.set(0, 0.36, 4.5);
+  group.add(cockpit);
+
+  for (const sx of [-3.8, 3.8]) {
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.3, 3.0), hullMat);
+    wing.position.set(sx * 0.68, 0.25, -0.4);
+    group.add(wing);
+
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.33, 0.38), emeraldMat);
+    stripe.position.set(sx * 0.68, 0.26, 0.2);
+    group.add(stripe);
+
+    const pod = new THREE.Mesh(new THREE.CylinderGeometry(0.76, 0.92, 2.7, 12), trimMat);
+    pod.position.set(sx, 0.05, -0.5);
+    group.add(pod);
+
+    const flame = new THREE.Mesh(
+      new THREE.ConeGeometry(0.68, 2.6, 10),
+      new THREE.MeshBasicMaterial({
+        color: 0x38e8ff,
+        transparent: true,
+        opacity: 0.85,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      })
+    );
+    flame.rotation.x = Math.PI;
+    flame.position.set(sx, -2.3, -0.5);
+    group.add(flame);
+  }
+
+  return group;
+}
+
+export interface RokNavyLcacRig {
+  group: THREE.Group;
+  rampPivot: THREE.Group;
+  fans: THREE.Object3D[];
+}
+
+/**
+ * ROK Navy LCAC-655 Air-Cushion Assault Hovercraft ("대한민국해군 655" — Image 3 homage!).
+ * Features black air-cushion skirt, armored well-deck walls, twin shrouded ducted turbofans,
+ * painted ROK Navy hull markings, and an animated front assault ramp.
+ */
+export function buildRokNavyLcacHovercraft(): RokNavyLcacRig {
+  const group = new THREE.Group();
+  const hullMat = new THREE.MeshStandardMaterial({
+    color: 0x3a434d,
+    roughness: 0.62,
+    metalness: 0.54,
+  });
+  const deckMat = new THREE.MeshStandardMaterial({
+    color: 0x22262c,
+    roughness: 0.82,
+    metalness: 0.35,
+  });
+  const skirtMat = new THREE.MeshStandardMaterial({
+    color: 0x14171c,
+    roughness: 0.92,
+    metalness: 0.08,
+  });
+  const darkIron = new THREE.MeshStandardMaterial({
+    color: 0x1b2028,
+    roughness: 0.44,
+    metalness: 0.82,
+  });
+
+  // Painted "대한민국해군 · 655" hull side plate CanvasTexture
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 128;
+  const g = c.getContext('2d');
+  if (g) {
+    g.fillStyle = '#3b4550';
+    g.fillRect(0, 0, 512, 128);
+    g.fillStyle = 'rgba(20, 24, 30, 0.35)';
+    for (let i = 0; i < 6; i++) {
+      g.fillRect(i * 88, 0, 3, 128);
+    }
+    g.fillStyle = '#d8e0ea';
+    g.font = 'bold 42px "Malgun Gothic", sans-serif';
+    g.fillText('대한민국해군', 175, 78);
+    g.fillStyle = '#eef3f8';
+    g.font = '900 46px monospace';
+    g.fillText('655', 38, 80);
+  }
+  const navyTex = new THREE.CanvasTexture(c);
+  navyTex.colorSpace = THREE.SRGBColorSpace;
+  const sideMarkMat = new THREE.MeshStandardMaterial({
+    map: navyTex,
+    roughness: 0.6,
+    metalness: 0.45,
+  });
+
+  // Inflated black rubber air-cushion hover skirt
+  const skirt = new THREE.Mesh(new THREE.BoxGeometry(8.6, 0.92, 14.2), skirtMat);
+  skirt.position.set(0, 0.46, 0);
+  group.add(skirt);
+
+  // Armored well-deck floor (walkable landing deck)
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(7.6, 0.35, 13.4), deckMat);
+  deck.position.set(0, 1.05, 0);
+  group.add(deck);
+
+  // Left & Right Armored Bulwark Sidewalls (keeping player & squad shielded during sea run-in!)
+  for (const sx of [-3.6, 3.6]) {
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(0.95, 2.35, 12.6), sideMarkMat);
+    wall.position.set(sx, 2.22, 0.2);
+    group.add(wall);
+
+    // Top deck rail & intake vents
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.48, 11.4), darkIron);
+    rail.position.set(sx, 3.55, 0.2);
+    group.add(rail);
+  }
+
+  // Starboard elevated command bridge cabin
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(2.1, 1.9, 3.8), hullMat);
+  cabin.position.set(3.2, 4.1, -1.6);
+  group.add(cabin);
+  const cabinGlass = new THREE.Mesh(
+    new THREE.BoxGeometry(1.7, 0.58, 0.14),
+    new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
+  );
+  cabinGlass.position.set(3.2, 4.35, -3.52);
+  group.add(cabinGlass);
+
+  // Radar mast + amber beacon
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 2.6, 8), darkIron);
+  mast.position.set(3.2, 6.2, -1.4);
+  group.add(mast);
+  const beacon = new THREE.Mesh(
+    new THREE.SphereGeometry(0.16, 8, 8),
+    new THREE.MeshBasicMaterial({ color: 0xff9b26 })
+  );
+  beacon.position.set(3.2, 7.55, -1.4);
+  group.add(beacon);
+
+  // Twin Shrouded Rear Ducted Turbofans (distinctive LCAC silhouette from Image 3!)
+  const fans: THREE.Object3D[] = [];
+  for (const fx of [-2.25, 2.25]) {
+    const shroud = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.55, 1.55, 1.65, 18, 1, true),
+      hullMat
+    );
+    shroud.rotation.x = Math.PI / 2;
+    shroud.position.set(fx, 3.35, 5.8);
+    group.add(shroud);
+
+    const rotor = new THREE.Group();
+    rotor.position.set(fx, 3.35, 5.8);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.6, 10), darkIron);
+    hub.rotation.x = Math.PI / 2;
+    rotor.add(hub);
+    for (let b = 0; b < 6; b++) {
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(0.18, 2.65, 0.05), darkIron);
+      blade.rotation.z = (b / 6) * Math.PI;
+      rotor.add(blade);
+    }
+    group.add(rotor);
+    fans.push(rotor);
+  }
+
+  // Animated Front Assault Ramp (pivots around bottom hinge at z = -6.7)
+  const rampPivot = new THREE.Group();
+  rampPivot.position.set(0, 1.12, -6.7);
+  const rampPlate = new THREE.Mesh(new THREE.BoxGeometry(6.2, 2.8, 0.24), hullMat);
+  rampPlate.position.set(0, 1.4, 0);
+  rampPivot.add(rampPlate);
+  // Yellow hazard chevron strip along ramp lip
+  const hazard = new THREE.Mesh(
+    new THREE.BoxGeometry(5.9, 0.22, 0.28),
+    new THREE.MeshBasicMaterial({ color: 0xf5b342 })
+  );
+  hazard.position.set(0, 2.68, 0);
+  rampPivot.add(hazard);
+  group.add(rampPivot);
+
+  return { group, rampPivot, fans };
+}
+
+export interface RokSquadmateRig {
+  root: THREE.Group;
+  torso: THREE.Mesh;
+  leftLeg: THREE.Mesh;
+  rightLeg: THREE.Mesh;
+  rightArm: THREE.Mesh;
+  irStrobe: THREE.Mesh;
+}
+
+/**
+ * Builds articulated ROK Special Forces squadmates (소재우 중사, 박현준 하사),
+ * friendly rogue synth Ghost-9, or wounded civilian/scout survivor.
+ */
+export function buildRokSquadmateModel(
+  role: 'sergeant' | 'corporal' | 'ghost9' | 'survivor',
+  pbr?: ExtendedPbrLibrary,
+  castShadow = true
+): RokSquadmateRig {
+  const root = new THREE.Group();
+
+  const isGhost = role === 'ghost9';
+  const isSurvivor = role === 'survivor';
+
+  const uniformMat = new THREE.MeshStandardMaterial({
+    color: isGhost ? 0x202b38 : isSurvivor ? 0x526072 : 0xb8c2ba,
+    map: !isGhost && !isSurvivor && pbr ? pbr.rokCamo.map : null,
+    normalMap: !isGhost && !isSurvivor && pbr ? pbr.rokCamo.normalMap : null,
+    normalScale: new THREE.Vector2(0.85, 0.85),
+    roughnessMap: !isGhost && !isSurvivor && pbr ? pbr.rokCamo.roughnessMap : null,
+    roughness: isGhost ? 0.42 : 0.9,
+    metalness: isGhost ? 0.62 : 0.06,
+    envMapIntensity: 0.4,
+  });
+  const vestMat = new THREE.MeshStandardMaterial({
+    color: isGhost ? 0x121b28 : isSurvivor ? 0xb86614 : 0x272e26,
+    normalMap: pbr ? pbr.kevlarGlove.normalMap : null,
+    normalScale: new THREE.Vector2(0.75, 0.75),
+    roughness: isGhost ? 0.36 : 0.84,
+    metalness: isGhost ? 0.72 : 0.14,
+    envMapIntensity: 0.45,
+  });
+  const helmetMat = new THREE.MeshStandardMaterial({
+    color: isGhost ? 0x1b2430 : isSurvivor ? 0x9aa4b0 : 0x2d352a,
+    roughness: 0.56,
+    metalness: isGhost ? 0.72 : 0.22,
+    envMapIntensity: 0.5,
+  });
+  const bootMat = new THREE.MeshStandardMaterial({
+    color: 0x181a1e,
+    roughness: 0.88,
+    metalness: 0.08,
+  });
+  const skinMat = new THREE.MeshStandardMaterial({
+    color: isGhost ? 0x121820 : 0xa8826a,
+    roughness: 0.82,
+    metalness: 0.04,
+  });
+  const gunMat = new THREE.MeshStandardMaterial({
+    color: 0x1a1e26,
+    normalMap: pbr ? pbr.gunmetal.normalMap : null,
+    roughness: 0.5,
+    metalness: 0.76,
+    envMapIntensity: 0.55,
+  });
+
+  // Hip-anchored tactical legs with knee pads & combat boots (ZERO pelvic detachment when running!)
+  const buildLeg = (sx: number): THREE.Mesh => {
+    const legGeo = new THREE.CylinderGeometry(0.105, 0.086, 0.78, 10);
+    legGeo.translate(0, -0.39, 0);
+    const leg = new THREE.Mesh(legGeo, uniformMat);
+    leg.position.set(sx * 0.14, 0.80, 0);
+    const kneePad = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.14, 0.11), vestMat);
+    kneePad.position.set(0, -0.38, 0.07);
+    leg.add(kneePad);
+    const boot = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.14, 0.27), bootMat);
+    boot.position.set(0, -0.73, 0.05);
+    leg.add(boot);
+    root.add(leg);
+    return leg;
+  };
+  const leftLeg = buildLeg(-1);
+  const rightLeg = buildLeg(1);
+
+  // Pelvis belt & sculpted MOLLE ballistic plate carrier torso + 3 chest mag pouches + hydration pack
+  const pelvis = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.18, 0.26), vestMat);
+  pelvis.position.set(0, 0.84, 0);
+  root.add(pelvis);
+
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.58, 0.30), vestMat);
+  torso.position.set(0, 1.18, 0);
+  root.add(torso);
+
+  // Chest triple magazine pouches & rear tactical radio backpack
+  for (const mx of [-0.12, 0, 0.12]) {
+    const pouch = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.17, 0.08), uniformMat);
+    pouch.position.set(mx, -0.05, 0.17);
+    torso.add(pouch);
+  }
+  const pack = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.42, 0.16), uniformMat);
+  pack.position.set(0, 0.02, -0.21);
+  torso.add(pack);
+  const radioAnt = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.01, 0.44, 6), bootMat);
+  radioAnt.position.set(-0.14, 0.36, -0.22);
+  torso.add(radioAnt);
+
+  // Head + FAST Ballistic Helmet + Dual-Tube NVG Mount + Tactical Goggles/Visor
+  const headBase = new THREE.Mesh(new THREE.SphereGeometry(0.145, 12, 10), skinMat);
+  headBase.position.set(0, 1.63, 0);
+  root.add(headBase);
+
+  const helmetShell = new THREE.Mesh(
+    new THREE.SphereGeometry(0.168, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.62),
+    helmetMat
+  );
+  helmetShell.position.set(0, 1.66, -0.01);
+  root.add(helmetShell);
+
+  if (!isSurvivor) {
+    // Dual-tube night-vision shroud on helmet brow
+    const nvgMount = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.055, 0.06), bootMat);
+    nvgMount.position.set(0, 1.74, 0.145);
+    root.add(nvgMount);
+    for (const nx of [-0.036, 0.036]) {
+      const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.02, 0.075, 8), bootMat);
+      tube.rotation.x = Math.PI / 2 - 0.35;
+      tube.position.set(nx, 1.74, 0.185);
+      root.add(tube);
+    }
+  }
+
+  const visor = new THREE.Mesh(
+    new THREE.BoxGeometry(0.22, 0.068, 0.08),
+    isGhost
+      ? new THREE.MeshBasicMaterial({ color: 0x2dd4bf })
+      : new THREE.MeshStandardMaterial({ color: 0x16222c, roughness: 0.2, metalness: 0.6 })
+  );
+  visor.position.set(0, 1.64, 0.13);
+  root.add(visor);
+
+  // Shoulder-anchored tactical arms + sculpted K-41 carbine with optic, barrel & magazine
+  const lArmGeo = new THREE.CylinderGeometry(0.075, 0.064, 0.56, 10);
+  lArmGeo.translate(0, -0.28, 0);
+  const leftArm = new THREE.Mesh(lArmGeo, uniformMat);
+  leftArm.position.set(-0.30, 1.40, 0.02);
+  leftArm.rotation.x = -0.68;
+  leftArm.rotation.z = -0.18;
+  const lPauldron = new THREE.Mesh(new THREE.SphereGeometry(0.095, 8, 8), vestMat);
+  leftArm.add(lPauldron);
+  root.add(leftArm);
+
+  const rArmGeo = new THREE.CylinderGeometry(0.075, 0.064, 0.56, 10);
+  rArmGeo.translate(0, -0.28, 0);
+  const rightArm = new THREE.Mesh(rArmGeo, uniformMat);
+  rightArm.position.set(0.30, 1.40, 0.04);
+  rightArm.rotation.x = -0.82;
+  const rPauldron = new THREE.Mesh(new THREE.SphereGeometry(0.095, 8, 8), vestMat);
+  rightArm.add(rPauldron);
+  if (!isSurvivor) {
+    const rifleGrp = new THREE.Group();
+    rifleGrp.position.set(-0.08, -0.44, 0.22);
+    rifleGrp.rotation.x = 0.82;
+    const rec = new THREE.Mesh(new THREE.BoxGeometry(0.068, 0.10, 0.46), gunMat);
+    rifleGrp.add(rec);
+    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.018, 0.44, 8), gunMat);
+    bar.rotation.x = Math.PI / 2;
+    bar.position.set(0, 0.018, 0.42);
+    rifleGrp.add(bar);
+    const mag = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.16, 0.07), bootMat);
+    mag.position.set(0, -0.11, 0.06);
+    mag.rotation.x = 0.2;
+    rifleGrp.add(mag);
+    const opt = new THREE.Mesh(new THREE.BoxGeometry(0.048, 0.05, 0.11), bootMat);
+    opt.position.set(0, 0.075, -0.02);
+    rifleGrp.add(opt);
+    rightArm.add(rifleGrp);
+  }
+  root.add(rightArm);
+
+  // Subtle helmet-top IR Strobe Beacon (glows white-hot in AC-130 FLIR thermal camera!)
+  const irStrobe = new THREE.Mesh(
+    new THREE.SphereGeometry(0.055, 8, 8),
+    new THREE.MeshBasicMaterial({
+      color: isGhost ? 0x2dd4bf : 0xe0f2fe,
+    })
+  );
+  irStrobe.position.set(0, 1.86, -0.02);
+  root.add(irStrobe);
+
+  // Enable real shadow casting on all ROK soldier meshes
+  if (castShadow) {
+    root.traverse((obj) => {
+      if (obj instanceof THREE.Mesh && obj !== irStrobe) {
+        obj.castShadow = true;
+        obj.receiveShadow = true;
+      }
+    });
+  }
+
+  return { root, torso, leftLeg, rightLeg, rightArm, irStrobe };
 }

@@ -1,20 +1,25 @@
 import * as THREE from 'three';
 
 export const PBR_TEXTURE_URLS = {
-  asphalt: '/src/assets/images/pbr_cyber_asphalt_1795255322096.jpg',
-  citadelWall: '/src/assets/images/pbr_server_citadel_wall_1795255368528.jpg',
-  armorPlate: '/src/assets/images/pbr_corrugated_armor_1795255343937.jpg',
+  asphalt: './src/assets/images/pbr_cyber_asphalt_1795255322096.jpg',
+  citadelWall: './src/assets/images/pbr_server_citadel_wall_1795255368528.jpg',
+  armorPlate: './src/assets/images/pbr_corrugated_armor_1795255343937.jpg',
 } as const;
 
 export interface ProceduralTextureSet {
   asphaltMap: THREE.Texture;
   asphaltBump: THREE.CanvasTexture;
+  asphaltRoughness: THREE.CanvasTexture;
   citadelWallMap: THREE.Texture;
   citadelWallBump: THREE.CanvasTexture;
+  citadelWallEmissive: THREE.CanvasTexture;
+  skylineWindowMap: THREE.CanvasTexture;
   armorPlateMap: THREE.Texture;
   armorPlateBump: THREE.CanvasTexture;
   gunmetalBump: THREE.CanvasTexture;
   holoReticleMap: THREE.CanvasTexture;
+  sniperReticleMap: THREE.CanvasTexture;
+  arcOpticReticleMap: THREE.CanvasTexture;
   concreteMap: THREE.Texture;
   concreteBump: THREE.CanvasTexture;
   crateMap: THREE.CanvasTexture;
@@ -120,6 +125,43 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
     )
   );
 
+  // Paired wet rain-puddle roughness map for asphalt (dark = mirror-slick puddle, light = damp stone grain)
+  const asphaltRoughness = track(
+    makeCanvasTexture(
+      256,
+      (ctx, s) => {
+        ctx.fillStyle = '#c4c4c4';
+        ctx.fillRect(0, 0, s, s);
+        // Subtle damp asphalt micro-variation
+        for (let i = 0; i < 2400; i++) {
+          const v = 165 + ((i * 37) % 60);
+          ctx.fillStyle = `rgb(${v},${v},${v})`;
+          ctx.fillRect((i * 73) % s, (i * 41) % s, 3, 3);
+        }
+        // Organic glossy rain puddles that mirror neon conduits & explosions
+        const puddles: Array<[number, number, number, number]> = [
+          [56, 72, 46, 32],
+          [178, 54, 42, 26],
+          [132, 168, 54, 34],
+          [42, 206, 38, 24],
+          [214, 198, 34, 28],
+        ];
+        for (const [px, py, rx, ry] of puddles) {
+          const g = ctx.createRadialGradient(px, py, 4, px, py, Math.max(rx, ry));
+          g.addColorStop(0, 'rgba(18, 18, 18, 0.96)');
+          g.addColorStop(0.58, 'rgba(34, 34, 34, 0.88)');
+          g.addColorStop(0.84, 'rgba(110, 110, 110, 0.45)');
+          g.addColorStop(1, 'rgba(196, 196, 196, 0)');
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.ellipse(px, py, rx, ry, 0.35, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      },
+      { repeat: 18, isColor: false }
+    )
+  );
+
   const citadelWallBump = track(
     makeCanvasTexture(
       256,
@@ -154,6 +196,80 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
         }
       },
       { repeat: 2, isColor: false }
+    )
+  );
+
+  // Subtle architectural server-rack emissive status LEDs & recessed data traces
+  const citadelWallEmissive = track(
+    makeCanvasTexture(
+      256,
+      (ctx, s) => {
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, s, s);
+        // Recessed horizontal micro-bus traces
+        for (let y = 32; y < s; y += 64) {
+          ctx.fillStyle = 'rgba(56, 217, 255, 0.18)';
+          ctx.fillRect(10, y - 1, s - 20, 2);
+        }
+        // Tiny glowing server blade status LEDs
+        for (let row = 0; row < 4; row++) {
+          for (let col = 0; col < 8; col++) {
+            const seed = (row * 13 + col * 29) % 11;
+            if (seed < 4) continue;
+            const lx = 14 + col * 30;
+            const ly = 16 + row * 64;
+            ctx.fillStyle =
+              seed === 10
+                ? 'rgba(255, 68, 34, 0.92)'
+                : seed >= 7
+                  ? 'rgba(56, 217, 255, 0.85)'
+                  : 'rgba(245, 179, 66, 0.72)';
+            ctx.fillRect(lx, ly, 7, 2.5);
+            if (seed >= 8) {
+              ctx.fillStyle = 'rgba(56, 217, 255, 0.35)';
+              ctx.fillRect(lx + 10, ly, 4, 2.5);
+            }
+          }
+        }
+      },
+      { repeat: 2, isColor: true }
+    )
+  );
+
+  // Cyberpunk Neo-Seoul megacity skyscraper illuminated window grid
+  const skylineWindowMap = track(
+    makeCanvasTexture(
+      256,
+      (ctx, s) => {
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(0, 0, s, s);
+        const cols = 16;
+        const rows = 32;
+        const cellW = s / cols;
+        const cellH = s / rows;
+        for (let r = 1; r < rows - 1; r++) {
+          const floorActive = ((r * 17 + 5) % 5) !== 0;
+          if (!floorActive) continue;
+          const isAccentFloor = r % 9 === 0;
+          for (let c = 1; c < cols - 1; c++) {
+            const hash = (r * 31 + c * 19 + r * c * 7) % 17;
+            if (hash < 9 && !isAccentFloor) continue;
+            if (isAccentFloor) {
+              ctx.fillStyle = r % 18 === 0 ? '#38d9ff' : '#ff5533';
+            } else if (hash >= 15) {
+              ctx.fillStyle = '#38d9ff';
+            } else if (hash >= 13) {
+              ctx.fillStyle = '#ff6b42';
+            } else if (hash >= 11) {
+              ctx.fillStyle = '#f8c36c';
+            } else {
+              ctx.fillStyle = '#9ec5e8';
+            }
+            ctx.fillRect(c * cellW + 2, r * cellH + 2, cellW - 4, cellH - 4);
+          }
+        }
+      },
+      { repeat: 1, isColor: true, anisotropy: maxAnisotropy }
     )
   );
 
@@ -205,37 +321,126 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
     )
   );
 
-  // Crisp glowing holographic sight reticle for first-person weapon optics
+  // Ultra-crisp transparent EOTech-style holographic reflex reticle (256px razor precision, non-glaring)
   const holoReticleMap = track(
     makeCanvasTexture(
-      128,
+      256,
       (ctx, s) => {
         const cx = s / 2;
         const cy = s / 2;
         ctx.clearRect(0, 0, s, s);
-        ctx.strokeStyle = 'rgba(56, 232, 255, 0.95)';
-        ctx.lineWidth = 3;
+        // Subtle segmented outer reflex ring
+        ctx.strokeStyle = 'rgba(255, 86, 56, 0.82)';
+        ctx.lineWidth = 2.6;
+        const r = 56;
+        const gaps = [0, Math.PI / 2, Math.PI, Math.PI * 1.5];
+        for (const a of gaps) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, a + 0.24, a + Math.PI / 2 - 0.24);
+          ctx.stroke();
+        }
+        // Fine cardinal reference ticks
+        ctx.strokeStyle = 'rgba(255, 198, 122, 0.88)';
+        ctx.lineWidth = 2.2;
         ctx.beginPath();
-        ctx.arc(cx, cy, 28, 0.25, Math.PI - 0.25);
+        ctx.moveTo(cx - 72, cy);
+        ctx.lineTo(cx - 46, cy);
+        ctx.moveTo(cx + 46, cy);
+        ctx.lineTo(cx + 72, cy);
+        ctx.moveTo(cx, cy - 72);
+        ctx.lineTo(cx, cy - 46);
+        ctx.moveTo(cx, cy + 46);
+        ctx.lineTo(cx, cy + 72);
         ctx.stroke();
+        // Crisp 2-MOA center illuminated red pinpoint dot
+        ctx.fillStyle = '#ff4422';
         ctx.beginPath();
-        ctx.arc(cx, cy, 28, Math.PI + 0.25, Math.PI * 2 - 0.25);
+        ctx.arc(cx, cy, 4.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#ffeae4';
+        ctx.beginPath();
+        ctx.arc(cx, cy, 1.7, 0, Math.PI * 2);
+        ctx.fill();
+      },
+      { isColor: true }
+    )
+  );
+
+  // Etched Mil-Dot cyan-white internal scope glass reticle for hollow RAIL-X9 Sniper Scope
+  const sniperReticleMap = track(
+    makeCanvasTexture(
+      256,
+      (ctx, s) => {
+        const cx = s / 2;
+        const cy = s / 2;
+        ctx.clearRect(0, 0, s, s);
+        ctx.strokeStyle = 'rgba(56, 217, 255, 0.78)';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 94, 0, Math.PI * 2);
         ctx.stroke();
-        ctx.strokeStyle = 'rgba(251, 191, 36, 0.95)';
-        ctx.lineWidth = 2.5;
+        // Fine crosshair stadia lines with open center precision gap
+        ctx.strokeStyle = 'rgba(224, 246, 255, 0.86)';
+        ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(cx - 44, cy);
+        ctx.moveTo(cx - 108, cy);
         ctx.lineTo(cx - 14, cy);
         ctx.moveTo(cx + 14, cy);
-        ctx.lineTo(cx + 44, cy);
-        ctx.moveTo(cx, cy - 42);
-        ctx.lineTo(cx, cy - 16);
-        ctx.moveTo(cx, cy + 16);
-        ctx.lineTo(cx, cy + 42);
+        ctx.lineTo(cx + 108, cy);
+        ctx.moveTo(cx, cy - 108);
+        ctx.lineTo(cx, cy - 14);
+        ctx.moveTo(cx, cy + 14);
+        ctx.lineTo(cx, cy + 108);
         ctx.stroke();
-        ctx.fillStyle = '#ff3b30';
+        // Mil-dot range ticks
+        ctx.fillStyle = 'rgba(56, 217, 255, 0.92)';
+        for (const d of [-66, -42, -24, 24, 42, 66]) {
+          ctx.fillRect(cx + d - 1, cy - 4, 2, 8);
+          ctx.fillRect(cx - 4, cy + d - 1, 8, 2);
+        }
+        ctx.fillStyle = '#38d9ff';
         ctx.beginPath();
-        ctx.arc(cx, cy, 4.5, 0, Math.PI * 2);
+        ctx.arc(cx, cy, 2.8, 0, Math.PI * 2);
+        ctx.fill();
+      },
+      { isColor: true }
+    )
+  );
+
+  // Open transparent ballistic/arc chevron reticle for HYDRA-7 Launcher & ZEUS-MK7 Tesla
+  const arcOpticReticleMap = track(
+    makeCanvasTexture(
+      256,
+      (ctx, s) => {
+        const cx = s / 2;
+        const cy = s / 2;
+        ctx.clearRect(0, 0, s, s);
+        ctx.strokeStyle = 'rgba(56, 217, 255, 0.85)';
+        ctx.lineWidth = 2.6;
+        // Center precision chevron
+        ctx.beginPath();
+        ctx.moveTo(cx - 24, cy + 16);
+        ctx.lineTo(cx, cy - 4);
+        ctx.lineTo(cx + 24, cy + 16);
+        ctx.stroke();
+        // Side range brackets
+        ctx.strokeStyle = 'rgba(245, 179, 66, 0.82)';
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.moveTo(cx - 64, cy - 22);
+        ctx.lineTo(cx - 76, cy);
+        ctx.lineTo(cx - 64, cy + 22);
+        ctx.moveTo(cx + 64, cy - 22);
+        ctx.lineTo(cx + 76, cy);
+        ctx.lineTo(cx + 64, cy + 22);
+        ctx.stroke();
+        // Ballistic drop dashes below center
+        ctx.fillStyle = 'rgba(245, 179, 66, 0.85)';
+        ctx.fillRect(cx - 12, cy + 32, 24, 2);
+        ctx.fillRect(cx - 8, cy + 48, 16, 2);
+        ctx.fillStyle = '#e0f7ff';
+        ctx.beginPath();
+        ctx.arc(cx, cy - 4, 3, 0, Math.PI * 2);
         ctx.fill();
       },
       { isColor: true }
@@ -554,12 +759,17 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
   return {
     asphaltMap,
     asphaltBump,
+    asphaltRoughness,
     citadelWallMap,
     citadelWallBump,
+    citadelWallEmissive,
+    skylineWindowMap,
     armorPlateMap,
     armorPlateBump,
     gunmetalBump,
     holoReticleMap,
+    sniperReticleMap,
+    arcOpticReticleMap,
     concreteMap: citadelWallMap,
     concreteBump: citadelWallBump,
     crateMap,

@@ -1,29 +1,60 @@
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { WarAudioEngine } from './audio';
+import { FootstepSurface, WarAudioEngine } from './audio';
+import {
+  buildEnemyGlbRig,
+  EnemyGlbTemplates,
+  K2TankGlbParts,
+  loadAndAttachBattlefieldGlbProps,
+  loadAndAttachGlbWeapons,
+  loadK2BlackPantherGlb,
+  loadUh60GunshipGlb,
+  preloadEnemyGlbTemplates,
+  Uh60GunshipGlbParts,
+} from './glbLoader';
 import {
   buildDropshipModel,
   buildEnemyModel,
+  buildRokSquadmateModel,
+  buildSupplyPodModel,
   buildViewmodelRig,
   EnemyRig,
+  RokSquadmateRig,
   ViewmodelRig,
 } from './models';
+import {
+  AC130_WEAPONS,
+  computeCampaignObjectiveText,
+  createInitialCampaignChoices,
+  getMissionProfile,
+  getWeaponAttachmentSpec,
+  resolveCampaignAutoEnding,
+} from './campaignMissions';
+import { createExtendedPbrLibrary, ExtendedPbrLibrary } from './pbrMaterials';
 import {
   advanceKillstreak,
   ARENA_HALF_SIZE,
   computeSpawnBalance,
+  computeStyleRank,
+  computeThreatState,
   computeWaveForKills,
   createRagdollConstraints,
+  DASH_MAX_CHARGES,
+  DASH_RECHARGE_SEC,
   evaluatePartHit,
   FACTION_META,
   formatClock,
   PART_LABELS_KR,
   PART_MULTIPLIERS,
   resolveXZCollision,
+  stepDashCharges,
+  stepHeliMinigunHeat,
+  stepTankDrivePhysics,
   stepVatsGauge,
   stepVerletRagdoll,
   VATS_MIN_ACTIVATE,
@@ -45,22 +76,37 @@ import { CinematicDirector } from './cinematicDirector';
 import { computeReloadTiming, evaluateWeaponReload } from './reloadSystem';
 import {
   AabbCollider,
+  Ac130HudState,
+  AimTargetTelemetry,
   BgmMood,
   BodyPart,
+  CampaignChoiceState,
+  CampaignMissionId,
+  CampaignPromptChoice,
+  CampaignStageId,
   CombatAnalyticsData,
+  CombatMedalItem,
   CommsSender,
   CompassContact,
+  EndingId,
   Faction,
   FloatingDamageNumber,
+  GameMode,
   GamePhase,
   GraphicsQuality,
+  HeliRideHudState,
   HudSnapshot,
   KillFeedItem,
   MinimapDot,
+  SquadmateTag,
+  SquadOrderId,
+  TankHudState,
   UnitArchetype,
   VatsTargetBox,
   VerletLink,
   VerletNode,
+  WeaponAttachmentId,
+  WorldWaypointMarker,
 } from './types';
 
 interface WorldCollider extends AabbCollider {
@@ -74,6 +120,7 @@ interface ExplosiveBarrel {
   z: number;
   r: number;
   mesh: THREE.Mesh;
+  collider: WorldCollider;
   hp: number;
   alive: boolean;
 }
@@ -99,16 +146,31 @@ interface ActiveUnit {
   fireCd: number;
   dmg: number;
   missing: Partial<Record<BodyPart, boolean>>;
+  armorPlateHp: Partial<Record<BodyPart, number>>;
   staggerTimer: number;
   burnTimer: number;
   empStunTimer: number;
+  stunImmuneTimer: number;
   walkPhase: number;
   strafeDir: number;
   strafeCd: number;
   hitFlash: number;
   hitFlinch: number;
   fireRecoil: number;
+  sniperCharge: number;
+  bossPhase: number;
+  bossMissileCd: number;
   alive: boolean;
+}
+
+interface ActiveSupplyDrop {
+  mesh: THREE.Group;
+  x: number;
+  y: number;
+  z: number;
+  landed: boolean;
+  collected: boolean;
+  life: number;
 }
 
 interface ActiveRagdoll {
@@ -144,6 +206,7 @@ interface ActiveShell {
   rx: number;
   ry: number;
   life: number;
+  bounces: number;
 }
 
 interface ActiveParticle {
@@ -263,11 +326,125 @@ interface ActiveDropPod {
   life: number;
 }
 
+interface ActiveSquadmate {
+  id: 'sergeant' | 'corporal' | 'ghost9' | 'survivor';
+  name: string;
+  rig: RokSquadmateRig;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  walkPhase: number;
+  fireCd: number;
+  active: boolean;
+  status: 'active' | 'wounded' | 'ghost';
+}
+
+interface ActiveAc130Shell {
+  pos: THREE.Vector3;
+  target: THREE.Vector3;
+  timeLeft: number;
+  maxTime: number;
+  radius: number;
+  dmg: number;
+  caliber: '25mm' | '40mm' | '105mm';
+  mesh: THREE.Mesh;
+}
+
 const MAX_DECALS = 220;
 const MAX_PARTICLES = 350;
 const MAX_RAGDOLLS = 16;
 const MAX_GIBS = 48;
 const MAX_SHELLS = 36;
+
+/**
+ * Lightweight AAA Filmic Post-Grading ShaderPass:
+ * - Optical radial chromatic aberration on explosions, Exo-Dash, EMP & hits
+ * - Subtle teal/amber shadow-highlight split-toning & micro-contrast polish
+ * - Clean optical cinema lens vignette
+ */
+const CINEMATIC_GRADE_SHADER = {
+  uniforms: {
+    tDiffuse: { value: null },
+    uChromatic: { value: 0.0005 },
+    uVignette: { value: 0.24 },
+    uContrast: { value: 1.03 },
+    uSaturation: { value: 1.06 },
+    uTint: { value: new THREE.Vector3(1.0, 1.0, 1.0) },
+    uFlirMode: { value: 0.0 }, // 0 = normal, 1 = WHOT (White-Hot Thermal), 2 = BHOT (Black-Hot Thermal)
+    uTime: { value: 0.0 },
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float uChromatic;
+    uniform float uVignette;
+    uniform float uContrast;
+    uniform float uSaturation;
+    uniform vec3 uTint;
+    uniform float uFlirMode;
+    uniform float uTime;
+    varying vec2 vUv;
+
+    float flirHash(vec2 p) {
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+    }
+
+    void main() {
+      vec2 centered = vUv - 0.5;
+      float dist = length(centered);
+
+      // Authentic AC-130 B&W Thermal FLIR Imaging (WHOT / BHOT) with CRT scanlines & sensor grain
+      if (uFlirMode > 0.5) {
+        vec3 raw = texture2D(tDiffuse, vUv).rgb;
+        float heat = dot(raw, vec3(0.32, 0.52, 0.16));
+        // Boost bright heat sources (enemies, fires, IR strobes, blasts) into crisp white-hot glow
+        float thermal = clamp(pow(max(0.0, heat * 1.48), 0.78) * 1.18 - 0.06, 0.0, 1.0);
+        float grain = (flirHash(floor(vUv * vec2(480.0, 270.0)) + vec2(fract(uTime * 19.0) * 13.0)) - 0.5) * 0.055;
+        float scan = sin(vUv.y * 540.0) * 0.022;
+        float val = clamp(thermal + grain + scan, 0.0, 1.0);
+        if (uFlirMode > 1.5) {
+          val = 1.0 - val;
+        }
+        float vigFlir = smoothstep(0.92, 0.28, dist);
+        val *= mix(0.68, 1.0, vigFlir);
+        vec3 flirCol = vec3(val * 0.96, val * 1.0, val * 0.99);
+        gl_FragColor = vec4(flirCol, 1.0);
+        return;
+      }
+
+      vec2 offset = centered * dist * uChromatic * 2.2;
+
+      float r = texture2D(tDiffuse, clamp(vUv + offset, 0.001, 0.999)).r;
+      float g = texture2D(tDiffuse, vUv).g;
+      float b = texture2D(tDiffuse, clamp(vUv - offset, 0.001, 0.999)).b;
+      vec3 col = vec3(r, g, b);
+
+      // Filmic contrast + rich vibrancy
+      col = (col - 0.5) * uContrast + 0.5;
+      float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
+      col = mix(vec3(luma), col, uSaturation);
+
+      // Subtle Neo-Seoul shadow/highlight split tone (cool steel shadows, crisp warm highlights)
+      vec3 shadowTone = vec3(0.95, 0.99, 1.05);
+      vec3 highlightTone = vec3(1.03, 1.0, 0.96);
+      col *= mix(shadowTone, highlightTone, smoothstep(0.18, 0.78, luma));
+      col *= uTint;
+
+      // Optical lens vignette
+      float vig = smoothstep(0.88, 0.3, dist);
+      col *= mix(1.0 - uVignette, 1.0, vig);
+
+      gl_FragColor = vec4(max(col, vec3(0.0)), 1.0);
+    }
+  `,
+};
 
 function detectSoftwareGl(): boolean {
   try {
@@ -289,17 +466,22 @@ export class IronAshEngine {
   private isSoftwareGl: boolean;
   private audio = new WarAudioEngine();
   private textures: ProceduralTextureSet;
+  private pbr: ExtendedPbrLibrary;
 
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private renderer: THREE.WebGLRenderer;
   private composer: EffectComposer | null = null;
+  private gtaoPass: GTAOPass | null = null;
+  private bloomPass: UnrealBloomPass | null = null;
+  private gradePass: ShaderPass | null = null;
   private vfx!: VolumetricVfxSystem;
   private worldRefs!: BuiltWorldRefs;
   private hemiLight!: THREE.HemisphereLight;
   private sunLight!: THREE.DirectionalLight;
   private lightningLight!: THREE.DirectionalLight;
   private muzzleLight!: THREE.PointLight;
+  private viewmodelLight!: THREE.PointLight;
   private blastLight!: THREE.PointLight;
   private viewmodel!: ViewmodelRig;
   private cinematic!: CinematicDirector;
@@ -315,16 +497,157 @@ export class IronAshEngine {
   private rainLines!: THREE.LineSegments;
   private dropPods: ActiveDropPod[] = [];
 
-  // Campaign Objective: 3 Firewall Relay Pylons -> OMNI-CORE Server Core Breach -> Dawn Ending
+  // Campaign Objective: 3 Firewall Relay Pylons -> OMNI-CORE Server Core Breach -> 3 Branching Endings
+  private gameMode: GameMode = 'campaign';
   private relaysDestroyed = 0;
   private coreShieldDown = false;
   private coreHp = 600;
   private coreMaxHp = 600;
   private serverShutdownActive = false;
+  private endingId: EndingId | null = null;
   private relay1FogShift = 0;
   private ttsEnabled = false;
+  private unlockedHolotapeIds = new Set<string>();
+  private theaterReturnToTitle = false;
   private _c1 = new THREE.Color();
   private _c2 = new THREE.Color();
+
+  // V3.0 AAA Action Systems: GTA 5-Star Threat, Combo Style, Kill-Cam, Adrenaline, Supply Drops, Boss Drop
+  private threatPoints = 0;
+  private lastThreatLevel = 1;
+  private comboCount = 0;
+  private comboTimer = 0;
+  private styleScore = 0;
+  private killCamTimer = 0;
+  private killCamBanner: string | null = null;
+  private supplyDropCd = 0;
+  private supplyDrops: ActiveSupplyDrop[] = [];
+  private overdriveTimer = 0;
+  private adrenalineTimer = 0;
+  private adrenalineUsed = false;
+  private titanDropShown = false;
+  private ascensionArcCd = 0;
+  private ghostIntroTimer = 14;
+
+  // V3.1 CoD × GTA Tactical Optics, Laser Sight, Target Telemetry, Medals & Inspect
+  private adsBlend = 0;
+  private prevAds = false;
+  private holdingBreath = false;
+  private inspectTimer = 0;
+  private aimDistanceM: number | null = null;
+  private aimTarget: AimTargetTelemetry | null = null;
+  private activeMedals: Array<CombatMedalItem & { life: number }> = [];
+  private nextMedalId = 1;
+  private wantedFlashSeq = 0;
+  private aimProbeAccum = 0;
+  private laserBeam!: THREE.Line;
+  private laserDot!: THREE.Mesh;
+
+  // V4.0 MWIII Tactical Realism: Mounting, Q/E Leaning, Weapon Wall Collision, Multi-Level & Eye Adaptation
+  private mounted = false;
+  private prevMounted = false;
+  private leanDir: -1 | 0 | 1 = 0;
+  private leanBlend = 0;
+  private wallBlockBlend = 0;
+  private wallBlocked = false;
+  private isIndoors = false;
+  private prevIndoors = false;
+  private currentExposure = 1.02;
+  private exposureAdaptationPulse = 0;
+  private stepDistAccum = 0;
+  private jetFlybyCd = 19;
+  private enemyShotTimestamps: number[] = [];
+  private activeSmokeZones: Array<{ x: number; z: number; r: number; timer: number }> = [];
+  private ac130KilledCount = 0;
+  private armorPlates = 2;
+  private readonly maxArmorPlates = 3;
+  private platingTimer = 0;
+  private readonly platingDuration = 1.35;
+  private smokeGrenades = 2;
+  private readonly maxSmokeGrenades = 2;
+  private squadOrder: SquadOrderId = 'follow';
+  private squadOrderTimer = 0;
+  private weaponAttachment: WeaponAttachmentId = 'standard';
+  private tacticalRay = new THREE.Raycaster();
+
+  // V5.0 Linear 4-Mission Setpiece Campaign, Squadmates, AC-130 FLIR Gunship & Auto-Branching Endings
+  private missionId: CampaignMissionId = 1;
+  private missionStage: CampaignStageId = 'm1_landing';
+  private stageTimer = 0;
+  private stageTransitionDelay = 0;
+  private stagePendingNext: { mission: CampaignMissionId; stage: CampaignStageId } | null = null;
+  private stageMilestones = new Set<string>();
+  private stageTotalHostiles = 6;
+  private campaignChoices: CampaignChoiceState = createInitialCampaignChoices();
+  private campaignPrompt: CampaignPromptChoice | null = null;
+  private autoEndingReason: string | null = null;
+  private checkpointSeq = 0;
+  private checkpointLabel = '';
+  private breachSlowmoTimer = 0;
+  private crisisTimer = 0;
+  private rescueAnimTimer = 0;
+  private squadmates: ActiveSquadmate[] = [];
+  private ac130OrbitAngle = 0.72;
+  private ac130TargetX = 0;
+  private ac130TargetZ = 4;
+  private ac130WeaponIdx: 0 | 1 | 2 = 1;
+  private ac130FireCd = 0;
+  private ac130ThermalMode: 'whot' | 'bhot' = 'whot';
+  private ac130Zoomed = false;
+  private ac130WaveIdx = 0;
+  private ac130Shells: ActiveAc130Shell[] = [];
+
+  // V7.0 Drivable K2-X Black Panther Main Battle Tank & Playable UH-60K Helicopter Door-Gunner Ride
+  private enemyGlbTemplates: EnemyGlbTemplates | null = null;
+  private tankGroup = new THREE.Group();
+  private tankParts: K2TankGlbParts | null = null;
+  private tankCollider: WorldCollider | null = null;
+  private tank = {
+    available: false,
+    driving: false,
+    x: 0,
+    z: 14.5,
+    hullYaw: 0,
+    turretYaw: 0,
+    turretVisualYaw: 0,
+    hullPitchKick: 0,
+    barrelPitch: 0,
+    speed: 0,
+    hp: 850,
+    maxHp: 850,
+    cannonCd: 0,
+    cannonReloadSec: 2.1,
+    recoilOffset: 0,
+    coaxCd: 0,
+    coaxHeat: 0,
+    coaxOverheated: false,
+    apsCd: 0,
+    gunnerOptic: false,
+  };
+  private tankShells: Array<{
+    mesh: THREE.Mesh;
+    pos: THREE.Vector3;
+    vel: THREE.Vector3;
+    life: number;
+  }> = [];
+
+  private heliGroup = new THREE.Group();
+  private heliParts: Uh60GunshipGlbParts | null = null;
+  private heliRide = {
+    active: false,
+    elapsed: 0,
+    duration: 19.0,
+    aimYawOffset: 0,
+    aimPitch: -0.26,
+    heat: 0,
+    overheated: false,
+    fireCd: 0,
+    soundCd: 0,
+    aaCd: 1.4,
+    killedCount: 0,
+    totalTargets: 10,
+    baseCamYaw: 0,
+  };
 
   // Dynamic gameplay pools
   private units: ActiveUnit[] = [];
@@ -454,6 +777,12 @@ export class IronAshEngine {
     reloadIsTactical: false,
     ads: false,
     sprinting: false,
+    dashCharges: DASH_MAX_CHARGES,
+    dashRechargeTimer: 0,
+    dashTimer: 0,
+    slideTimer: 0,
+    dashDirX: 0,
+    dashDirZ: -1,
     recoilPitch: 0,
     vmKickZ: 0,
     vmRecoilPitch: 0,
@@ -514,7 +843,7 @@ export class IronAshEngine {
     );
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.24;
+    this.renderer.toneMappingExposure = 1.02;
     this.renderer.shadowMap.enabled = !this.isSoftwareGl;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.domElement.dataset.testid = 'warzone-canvas';
@@ -523,47 +852,154 @@ export class IronAshEngine {
     this.renderer.domElement.style.height = '100%';
     container.appendChild(this.renderer.domElement);
 
-    // Mandatory Studio Environment Reflections via RoomEnvironment
+    // Moody Stormy Neo-Seoul Night PMREM IBL (replaces bright white studio RoomEnvironment lightbox!)
     const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    const envScene = new THREE.Scene();
+    envScene.background = new THREE.Color(0x0b1018);
+    // Overcast dark steel-blue storm sky dome panel
+    const skyPanel = new THREE.Mesh(
+      new THREE.SphereGeometry(20, 16, 12),
+      new THREE.MeshBasicMaterial({ color: 0x1e2c3e, side: THREE.BackSide })
+    );
+    envScene.add(skyPanel);
+    // Subtle distant amber urban fire glow along north horizon
+    const fireBounce = new THREE.Mesh(
+      new THREE.PlaneGeometry(18, 5),
+      new THREE.MeshBasicMaterial({ color: 0x6b321a })
+    );
+    fireBounce.position.set(0, 2, -12);
+    envScene.add(fireBounce);
+    // Soft moonlight overcast cloud break overhead
+    const moonBounce = new THREE.Mesh(
+      new THREE.PlaneGeometry(14, 14),
+      new THREE.MeshBasicMaterial({ color: 0x5c728a })
+    );
+    moonBounce.rotation.x = Math.PI / 2;
+    moonBounce.position.set(4, 11, -3);
+    envScene.add(moonBounce);
+    // Dark damp asphalt ground bounce so undersides never glow white
+    const groundBounce = new THREE.Mesh(
+      new THREE.PlaneGeometry(36, 36),
+      new THREE.MeshBasicMaterial({ color: 0x0b0e14 })
+    );
+    groundBounce.rotation.x = -Math.PI / 2;
+    groundBounce.position.y = -6;
+    envScene.add(groundBounce);
+    this.scene.environment = pmrem.fromScene(envScene, 0.08).texture;
+    this.scene.environmentIntensity = 0.94;
     pmrem.dispose();
 
-    this.textures = createProceduralTextures(
-      this.isSoftwareGl ? 1 : Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
-    );
+    const maxAniso = this.isSoftwareGl ? 1 : Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    this.textures = createProceduralTextures(maxAniso);
+    this.pbr = createExtendedPbrLibrary(maxAniso);
     this.vfx = new VolumetricVfxSystem(this.scene);
+    this.vfx.setSmokeTexture(this.pbr.smokePuffTex);
     this.initMaterials();
     this.initLighting();
-    this.viewmodel = buildViewmodelRig(this.camera, this.textures);
+    this.viewmodel = buildViewmodelRig(this.camera, this.textures, this.pbr);
     const muzzleSpriteMat = new THREE.SpriteMaterial({
       map: this.textures.vfxMuzzleMap,
       transparent: true,
+      opacity: 0.54,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
-      depthTest: false,
+      depthTest: true,
     });
     this.muzzleSprite = new THREE.Sprite(muzzleSpriteMat);
-    this.muzzleSprite.position.set(0, 0.04, -1.04);
-    this.muzzleSprite.scale.set(0.46, 0.46, 1);
+    this.muzzleSprite.position.set(0, 0.03, -1.08);
+    this.muzzleSprite.scale.set(0.32, 0.32, 1);
     this.muzzleSprite.visible = false;
     this.viewmodel.pivot.add(this.muzzleSprite);
 
+    // CoD PEQ-15 Tactical Laser Sight Beam + Target Impact Dot
+    const laserGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(),
+      new THREE.Vector3(0, 0, -1),
+    ]);
+    const laserMat = new THREE.LineBasicMaterial({
+      color: 0xff3b3b,
+      transparent: true,
+      opacity: 0.38,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    this.laserBeam = new THREE.Line(laserGeo, laserMat);
+    this.laserBeam.frustumCulled = false;
+    this.laserBeam.visible = false;
+    this.scene.add(this.laserBeam);
+
+    this.laserDot = new THREE.Mesh(
+      new THREE.SphereGeometry(0.042, 8, 8),
+      new THREE.MeshBasicMaterial({
+        color: 0xff4b4b,
+        transparent: true,
+        opacity: 0.85,
+        depthWrite: false,
+      })
+    );
+    this.laserDot.visible = false;
+    this.scene.add(this.laserDot);
+
     this.buildSectorZeroMap();
+    this.initSquadmates();
+    this.initPlayableVehicles();
     this.buildHolotapeBeacons();
     this.initWeatherAndAsh();
 
-    // GPU-only Selective UnrealBloomPass + OutputPass postprocessing (direct render on software WebGL)
+    // Seamlessly swap in ALL 8 high-poly binary .glb models (5 weapons + K-808 APCs + Korean Sedans + Sandbag Bunkers)
+    void loadAndAttachGlbWeapons(this.viewmodel, this.pbr, this.textures, () => this.disposed);
+    void loadAndAttachBattlefieldGlbProps(
+      {
+        k808Apcs: this.worldRefs.k808Anchors,
+        sedans: this.worldRefs.sedanAnchors,
+        sandbags: this.worldRefs.sandbagAnchors,
+      },
+      this.pbr,
+      this.textures,
+      !this.isSoftwareGl,
+      () => this.disposed
+    );
+
+    // GPU-only 4x MSAA EffectComposer + Grounded GTAO + Selective High-Threshold Bloom + sRGB OutputPass -> Filmic/FLIR Grade
     if (!this.isSoftwareGl) {
-      this.composer = new EffectComposer(this.renderer);
+      const msaaTarget = new THREE.WebGLRenderTarget(initW, initH, {
+        type: THREE.HalfFloatType,
+        samples: 4,
+      });
+      this.composer = new EffectComposer(this.renderer, msaaTarget);
       this.composer.addPass(new RenderPass(this.scene, this.camera));
-      const bloomPass = new UnrealBloomPass(
+
+      this.gtaoPass = new GTAOPass(this.scene, this.camera, initW, initH);
+      this.gtaoPass.output = GTAOPass.OUTPUT.Default;
+      this.gtaoPass.blendIntensity = 0.52;
+      this.gtaoPass.updateGtaoMaterial({
+        radius: 0.54,
+        distanceExponent: 2.0,
+        thickness: 0.95,
+        samples: 12,
+      });
+      this.gtaoPass.updatePdMaterial({
+        lumaPhi: 10,
+        depthPhi: 2,
+        normalPhi: 3,
+        radius: 3,
+        radiusExponent: 1,
+        rings: 2,
+        samples: 12,
+      });
+      this.composer.addPass(this.gtaoPass);
+
+      this.bloomPass = new UnrealBloomPass(
         new THREE.Vector2(initW, initH),
-        0.42,
-        0.48,
-        0.8
+        0.15,
+        0.28,
+        1.18
       );
-      this.composer.addPass(bloomPass);
+      this.composer.addPass(this.bloomPass);
+      // OutputPass FIRST (ACESFilmic tone-mapping + linear->sRGB) so gradePass & FLIR operate in exact display sRGB!
       this.composer.addPass(new OutputPass());
+      this.gradePass = new ShaderPass(CINEMATIC_GRADE_SHADER);
+      this.composer.addPass(this.gradePass);
       this.renderer.compile(this.scene, this.camera);
     }
 
@@ -572,8 +1008,10 @@ export class IronAshEngine {
       onBraaam: () => this.audio.playBraaam(),
       onTypewriterTick: () => this.audio.playTypewriterTick(),
       onCommsCue: (sender) => this.audio.playCommsCue(sender),
+      onTitanImpact: (pos) => this.handleTitanDropImpact(pos),
       onBreachDomeShatter: () => this.handleBreachDomeShatter(),
       onDawnBlackoutImpact: () => this.handleDawnBlackoutImpact(),
+      onEndingImpact: (ending) => this.handleEndingImpact(ending),
       onSequenceComplete: (seq) => this.handleCinematicComplete(seq),
       onSpeakSubtitle: (cue) => this.speakSubtitleIfEnabled(cue.text, cue.sender),
     });
@@ -594,65 +1032,80 @@ export class IronAshEngine {
 
   private initMaterials(): void {
     this.matCache = {
-      // Wet reflective cyber-asphalt floor catches crisp sky & conduit specular reflections
+      // Real photographic rain-wet Seoul tarmac asphalt with Sobel normal + puddle roughness + cavity AO!
       floor: new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        map: this.textures.asphaltMap,
-        bumpMap: this.textures.asphaltBump,
-        bumpScale: 0.18,
-        roughness: 0.44,
-        metalness: 0.38,
-        envMapIntensity: 1.4,
-      }),
-      // Matte structural concrete contrasts strongly against polished metallic armor & wet asphalt
-      concrete: new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        map: this.textures.citadelWallMap,
-        bumpMap: this.textures.citadelWallBump,
-        bumpScale: 0.26,
-        roughness: 0.78,
+        color: 0xcfd6df,
+        map: this.pbr.seoulAsphalt.map,
+        normalMap: this.pbr.seoulAsphalt.normalMap,
+        normalScale: new THREE.Vector2(1.05, 1.05),
+        roughnessMap: this.pbr.seoulAsphalt.roughnessMap,
+        aoMap: this.pbr.seoulAsphalt.aoMap,
+        aoMapIntensity: 0.78,
+        roughness: 0.94,
         metalness: 0.16,
-        envMapIntensity: 0.85,
+        envMapIntensity: 0.48,
       }),
-      // Brushed anodized titanium armor plating
+      // Matte war-scarred concrete & Euljiro architectural bulkheads
+      concrete: new THREE.MeshStandardMaterial({
+        color: 0xc8ced6,
+        map: this.pbr.seoulFacade.map,
+        normalMap: this.pbr.seoulFacade.normalMap,
+        normalScale: new THREE.Vector2(0.95, 0.95),
+        roughnessMap: this.pbr.seoulFacade.roughnessMap,
+        aoMap: this.pbr.seoulFacade.aoMap,
+        aoMapIntensity: 0.85,
+        roughness: 0.9,
+        metalness: 0.1,
+        envMapIntensity: 0.35,
+      }),
+      // Battle-worn matte olive-gunmetal military armor plating (real photographic gunmetal PBR!)
       armorPlate: new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        map: this.textures.armorPlateMap,
-        bumpMap: this.textures.armorPlateBump,
-        bumpScale: 0.22,
-        roughness: 0.34,
-        metalness: 0.78,
-        envMapIntensity: 1.45,
+        color: 0xbac2cc,
+        map: this.pbr.gunmetal.map,
+        normalMap: this.pbr.gunmetal.normalMap,
+        normalScale: new THREE.Vector2(0.9, 0.9),
+        roughnessMap: this.pbr.gunmetal.roughnessMap,
+        aoMap: this.pbr.gunmetal.aoMap,
+        aoMapIntensity: 0.85,
+        roughness: 0.76,
+        metalness: 0.62,
+        envMapIntensity: 0.58,
       }),
       darkIron: new THREE.MeshStandardMaterial({
-        color: 0x262d3a,
-        bumpMap: this.textures.gunmetalBump,
-        bumpScale: 0.09,
-        roughness: 0.3,
-        metalness: 0.88,
-        envMapIntensity: 1.5,
+        color: 0x252b34,
+        map: this.pbr.gunmetal.map,
+        normalMap: this.pbr.gunmetal.normalMap,
+        normalScale: new THREE.Vector2(0.65, 0.65),
+        roughnessMap: this.pbr.gunmetal.roughnessMap,
+        roughness: 0.66,
+        metalness: 0.72,
+        envMapIntensity: 0.55,
       }),
       rustMetal: new THREE.MeshStandardMaterial({
-        color: 0x6b3522,
-        bumpMap: this.textures.armorPlateBump,
-        bumpScale: 0.14,
-        roughness: 0.68,
-        metalness: 0.56,
+        color: 0x613524,
+        normalMap: this.pbr.gunmetal.normalMap,
+        normalScale: new THREE.Vector2(0.75, 0.75),
+        roughness: 0.82,
+        metalness: 0.42,
+        envMapIntensity: 0.35,
       }),
       crate: new THREE.MeshStandardMaterial({
-        color: 0xffffff,
+        color: 0xb5bdb4,
         map: this.textures.crateMap,
-        bumpMap: this.textures.crateBump,
-        bumpScale: 0.18,
-        roughness: 0.62,
-        metalness: 0.32,
+        normalMap: this.pbr.gunmetal.normalMap,
+        normalScale: new THREE.Vector2(0.6, 0.6),
+        roughness: 0.78,
+        metalness: 0.28,
+        envMapIntensity: 0.38,
       }),
       barrel: new THREE.MeshStandardMaterial({
-        color: 0xffffff,
+        color: 0xc8c2c0,
         map: this.textures.barrelMap,
-        roughness: 0.34,
-        metalness: 0.62,
-        envMapIntensity: 1.3,
+        normalMap: this.pbr.gunmetal.normalMap,
+        normalScale: new THREE.Vector2(0.5, 0.5),
+        roughness: 0.58,
+        metalness: 0.52,
+        envMapIntensity: 0.52,
       }),
       blood: new THREE.MeshBasicMaterial({ color: 0x162436 }),
       spark: new THREE.MeshBasicMaterial({ color: 0xffb02e }),
@@ -665,36 +1118,36 @@ export class IronAshEngine {
       fire: new THREE.MeshBasicMaterial({ color: 0xff5a14 }),
       brass: new THREE.MeshStandardMaterial({
         color: 0xd4a442,
-        roughness: 0.2,
-        metalness: 0.95,
-        envMapIntensity: 1.6,
+        roughness: 0.28,
+        metalness: 0.88,
+        envMapIntensity: 0.85,
       }),
     };
   }
 
   private initLighting(): void {
-    // High-contrast AAA tungsten-amber key vs cool titanium-steel sky hemisphere + sculpted rim separation
-    this.hemiLight = new THREE.HemisphereLight(0x96bfe8, 0x231a15, 1.08);
+    // Grounded Modern Warfare Overcast Stormy Seoul Lighting (rich shadow detail + cool skylight, zero whiteout!)
+    this.hemiLight = new THREE.HemisphereLight(0x88a8cf, 0x2c3442, 0.92);
     this.scene.add(this.hemiLight);
 
-    this.sunLight = new THREE.DirectionalLight(0xffc38c, 1.94);
-    this.sunLight.position.set(42, 68, 32);
+    this.sunLight = new THREE.DirectionalLight(0xc8daf0, 1.95);
+    this.sunLight.position.set(28, 66, -26);
     this.sunLight.castShadow = !this.isSoftwareGl;
-    this.sunLight.shadow.mapSize.set(1024, 1024);
+    this.sunLight.shadow.mapSize.set(this.isSoftwareGl ? 512 : 2048, this.isSoftwareGl ? 512 : 2048);
     this.sunLight.shadow.camera.near = 10;
-    this.sunLight.shadow.camera.far = 165;
-    const sc = 56;
+    this.sunLight.shadow.camera.far = 160;
+    const sc = 48;
     this.sunLight.shadow.camera.left = -sc;
     this.sunLight.shadow.camera.right = sc;
     this.sunLight.shadow.camera.top = sc;
     this.sunLight.shadow.camera.bottom = -sc;
-    this.sunLight.shadow.bias = -0.0006;
-    this.sunLight.shadow.normalBias = 0.02;
+    this.sunLight.shadow.bias = -0.0004;
+    this.sunLight.shadow.normalBias = 0.018;
     this.scene.add(this.sunLight);
 
-    // Sculpted cool cobalt-silver metallic edge rim light (carves robot armor, barrels & monolith silhouettes)
-    const rimLight = new THREE.DirectionalLight(0x7ab4ff, 0.82);
-    rimLight.position.set(-48, 36, -42);
+    // Warm urban fire-horizon rim light for crisp 3D silhouette separation on vehicles, walls & squads
+    const rimLight = new THREE.DirectionalLight(0xe09a68, 0.52);
+    rimLight.position.set(-42, 28, -46);
     this.scene.add(rimLight);
 
     // Occasional storm lightning directional flash
@@ -702,11 +1155,17 @@ export class IronAshEngine {
     this.lightningLight.position.set(-40, 80, -35);
     this.scene.add(this.lightningLight);
 
-    this.muzzleLight = new THREE.PointLight(0xffbb55, 0, 18);
-    this.muzzleLight.position.set(0.28, -0.1, -1.0);
+    // Balanced MWIII upper-left key rim light illuminating Picatinny rails, engravings & ROK camo sleeve
+    this.viewmodelLight = new THREE.PointLight(0xc4d8f0, 0.62, 2.8, 1.0);
+    this.viewmodelLight.position.set(-0.24, 0.30, -0.34);
+    this.camera.add(this.viewmodelLight);
+
+    // Physically calibrated decay=1.4 dynamic muzzle & explosion point lights (real wall & asphalt illumination!)
+    this.muzzleLight = new THREE.PointLight(0xffb44d, 0, 22, 1.4);
+    this.muzzleLight.position.set(0.24, -0.08, -1.0);
     this.camera.add(this.muzzleLight);
 
-    this.blastLight = new THREE.PointLight(0xff6b22, 0, 48);
+    this.blastLight = new THREE.PointLight(0xff6b22, 0, 48, 1.35);
     this.scene.add(this.blastLight);
   }
 
@@ -718,7 +1177,6 @@ export class IronAshEngine {
     group.position.set(x, 0.74, z);
     group.castShadow = !this.isSoftwareGl;
     group.receiveShadow = true;
-    // Steel top & bottom rims for composite silhouette
     const topRim = new THREE.Mesh(
       new THREE.TorusGeometry(0.51, 0.04, 6, 12),
       this.matCache.darkIron
@@ -729,7 +1187,27 @@ export class IronAshEngine {
 
     this.scene.add(group);
     this.worldHitMeshes.push(group);
-    const barrel: ExplosiveBarrel = { x, z, r: 0.6, mesh: group, hp: 32, alive: true };
+    const barrelCol: WorldCollider = {
+      minX: x - 0.54,
+      maxX: x + 0.54,
+      minZ: z - 0.54,
+      maxZ: z + 0.54,
+      height: 1.5,
+      mesh: group,
+      destructible: false,
+      hp: 9999,
+      alive: true,
+    };
+    this.colliders.push(barrelCol);
+    const barrel: ExplosiveBarrel = {
+      x,
+      z,
+      r: 0.6,
+      mesh: group,
+      collider: barrelCol,
+      hp: 32,
+      alive: true,
+    };
     group.userData = { isWorld: true, barrel };
     this.explosiveBarrels.push(barrel);
   }
@@ -738,6 +1216,7 @@ export class IronAshEngine {
     this.worldRefs = buildOmniCoreWorld({
       scene: this.scene,
       textures: this.textures,
+      pbr: this.pbr,
       isSoftwareGl: this.isSoftwareGl,
       matCache: this.matCache,
       colliders: this.colliders,
@@ -746,6 +1225,37 @@ export class IronAshEngine {
     });
     this.searchlights = this.worldRefs.searchlights;
     this.fireLights = this.worldRefs.fireLights;
+  }
+
+  private initSquadmates(): void {
+    const defs: Array<{
+      id: ActiveSquadmate['id'];
+      name: string;
+      status: ActiveSquadmate['status'];
+    }> = [
+      { id: 'sergeant', name: '소재우 중사', status: 'active' },
+      { id: 'corporal', name: '박현준 하사', status: 'active' },
+      { id: 'ghost9', name: '고스트-9', status: 'ghost' },
+      { id: 'survivor', name: '생존자', status: 'wounded' },
+    ];
+    for (const d of defs) {
+      const rig = buildRokSquadmateModel(d.id, this.pbr, !this.isSoftwareGl);
+      rig.root.visible = false;
+      this.scene.add(rig.root);
+      this.squadmates.push({
+        id: d.id,
+        name: d.name,
+        rig,
+        x: 0,
+        y: 0,
+        z: 36,
+        yaw: Math.PI,
+        walkPhase: 0,
+        fireCd: 0.8 + Math.random() * 0.6,
+        active: false,
+        status: d.status,
+      });
+    }
   }
 
   private initWeatherAndAsh(): void {
@@ -853,40 +1363,124 @@ export class IronAshEngine {
     this.titleHotkeyEnabled = enabled;
   }
 
-  public startGame(skipIntro = false): void {
+  public startGame(
+    skipIntro = false,
+    mode: GameMode = 'campaign',
+    startMission: CampaignMissionId = 1,
+    autoBoardTank = false
+  ): void {
     this.audio.init();
+    this.gameMode = mode;
+    this.theaterReturnToTitle = false;
     this.resetMatchState();
     this.setPhase('playing');
-    if (skipIntro) {
+    if (mode === 'freeroam') {
       this.player.equipTimer = 0.55;
+      // Deploy drivable ROK K2-X Black Panther Main Battle Tank right at the southern depot!
+      this.deployTankAt(9.5, 24.5, 0);
+      if (autoBoardTank) this.enterTank();
       this.cinematic.showChapterCard(
-        'ACT 01 // 최후의 맥박',
-        'THE LAST PULSE',
-        'SECTOR-07 구도심 방벽 · 2089.11.21 · 생존자: 1',
-        '#38bdf8',
-        4.4
+        'FREE ROAM // 네오-섹터 제로',
+        'WARZONE SANDBOX',
+        'K2-X 흑표 전차 배치 · 5성 위협 경보 · 무한 화력전',
+        '#f5b342',
+        4.2
       );
-      this.cinematic.enqueueSubtitles(
-        [
-          {
-            speaker: 'EXO-SUIT OS',
-            role: '오프라인 전술 링크',
-            sender: 'exo',
-            accentCss: '#38bdf8',
-            text: '생체 맥박 복구 완료, 이안 케인. 마지막 오프라인 링크를 가동한다. 북쪽 중앙 서버의 방어막을 유지하는 붉은 파일런 3기를 파괴하라.',
-            duration: 6.4,
-          },
-        ],
-        true
-      );
+      this.triggerRadioComms('deploy', false);
     } else {
-      const cit = this.worldRefs?.citadel;
-      this.cinematic.startOpening(
-        { x: this.player.x, y: this.player.y, z: this.player.z },
-        { x: cit?.x ?? 0, y: 12, z: cit?.z ?? -35 }
-      );
+      // 4-Mission Linear Setpiece Campaign (1st-person uncut choreography — no detached wave grind!)
+      const prof = getMissionProfile(startMission);
+      const initialStage: CampaignStageId =
+        skipIntro && startMission === 1 ? 'm1_beachhead' : prof.initialStage;
+      this.beginCampaignStage(startMission, initialStage);
+      if (autoBoardTank && this.tank.available) {
+        this.enterTank();
+      }
     }
     this.requestPointerLockSafe();
+    this.emitHudSnapshot(true);
+  }
+
+  public jumpToCampaignMission(missionId: CampaignMissionId): void {
+    this.startGame(false, 'campaign', missionId);
+  }
+
+  public toggleAc130Thermal(): void {
+    if (!this.isAc130Active()) return;
+    this.ac130ThermalMode = this.ac130ThermalMode === 'whot' ? 'bhot' : 'whot';
+    this.audio.playAdsClick(true);
+    this.emitHudSnapshot(true);
+  }
+
+  public selectAc130Weapon(idx: 0 | 1 | 2): void {
+    if (!this.isAc130Active()) return;
+    if (this.ac130WeaponIdx === idx) return;
+    this.ac130WeaponIdx = idx;
+    this.audio.playMountClick(true);
+    this.emitHudSnapshot(true);
+  }
+
+  public chooseEnding(ending: EndingId): void {
+    if (this.phase !== 'playing') return;
+    if (this.cinematic.getSequence() !== 'choice' && !this.coreShieldDown) return;
+    this.endingId = ending;
+    this.serverShutdownActive = true;
+    this.vatsActive = false;
+    this.clearHeldInputs();
+    const cit = this.worldRefs?.citadel;
+    this.cinematic.startEnding(
+      ending,
+      { x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z },
+      { x: cit?.x ?? 0, y: 10.5, z: cit?.z ?? -35 },
+      { x: cit?.x ?? 0, y: 12, z: cit?.z ?? -35 }
+    );
+    this.emitHudSnapshot(true);
+  }
+
+  public playTheaterSequence(
+    seq:
+      | 'opening'
+      | 'heli_ride'
+      | 'tank_assault'
+      | 'titan_drop'
+      | 'breach'
+      | 'choice'
+      | 'dawn'
+      | 'symbiosis'
+      | 'ascension'
+  ): void {
+    this.audio.init();
+    this.gameMode = 'campaign';
+    this.resetMatchState();
+    this.theaterReturnToTitle = seq !== 'choice' && seq !== 'heli_ride' && seq !== 'tank_assault';
+    this.setPhase('playing');
+    const cit = this.worldRefs?.citadel;
+    const citPos = { x: cit?.x ?? 0, y: 12, z: cit?.z ?? -35 };
+    const lookAt = { x: 0, y: 6, z: -20 };
+    if (seq === 'heli_ride') {
+      this.beginCampaignStage(3, 'm3_heli_insert');
+      this.requestPointerLockSafe();
+    } else if (seq === 'tank_assault') {
+      this.beginCampaignStage(4, 'm4_tank_assault');
+      this.enterTank();
+      this.requestPointerLockSafe();
+    } else if (seq === 'opening') {
+      this.cinematic.startOpening({ x: 0, y: 1.7, z: 32 }, citPos);
+    } else if (seq === 'titan_drop') {
+      this.cinematic.startTitanDrop({ x: 0, y: 1.7, z: 12 }, lookAt, { x: 0, y: 0, z: -8 });
+    } else if (seq === 'breach') {
+      this.coreShieldDown = true;
+      this.cinematic.startBreach({ x: 0, y: 1.7, z: 10 }, lookAt, citPos);
+    } else if (seq === 'choice') {
+      this.coreShieldDown = true;
+      this.exitPointerLockSafe();
+      this.cinematic.startChoice({ x: 0, y: 1.7, z: -4 }, citPos, citPos);
+    } else {
+      this.coreShieldDown = true;
+      this.endingId = seq;
+      this.serverShutdownActive = true;
+      this.cinematic.startEnding(seq, { x: 0, y: 1.7, z: -6 }, citPos, citPos);
+    }
     this.emitHudSnapshot(true);
   }
 
@@ -896,20 +1490,151 @@ export class IronAshEngine {
     }
   }
 
+  public setWeaponAttachment(id: WeaponAttachmentId): void {
+    this.weaponAttachment = id;
+    for (let i = 0; i < WEAPONS.length; i++) {
+      this.player.ammo[i] = this.getEffectiveMag(i);
+    }
+    this.emitHudSnapshot(true);
+  }
+
+  private getEffectiveMag(wpnIdx: number): number {
+    const base = WEAPONS[wpnIdx]?.mag ?? 32;
+    const att = getWeaponAttachmentSpec(this.weaponAttachment);
+    return Math.max(1, Math.round(base * att.magMult));
+  }
+
+  /** Warzone-style [H] Ceramic Ballistic Armor Plate (+45 Armor on foot, OR +220 Field ERA Repair inside K2-X Tank!) */
+  public startArmorPlateInsert(): void {
+    if (
+      this.phase !== 'playing' ||
+      !this.player.alive ||
+      this.isAc130Active() ||
+      this.isHeliRideActive() ||
+      this.isFirstPersonSetpieceActive() ||
+      this.platingTimer > 0
+    ) {
+      return;
+    }
+    // Inside K2-X Black Panther Tank -> Field ERA Reactive Armor Repair (+220 HP)
+    if (this.tank.driving) {
+      if (this.armorPlates <= 0) {
+        this.showCallout('긴급 수리 키트(방탄판) 없음 — 보급([V])으로 보충', '#94a3b8', 1.6);
+        return;
+      }
+      if (this.tank.hp >= this.tank.maxHp) {
+        this.showCallout('K2-X 전차 복합장갑 최대치 (100%)', '#38d9ff', 1.2);
+        return;
+      }
+      this.armorPlates--;
+      this.tank.hp = Math.min(this.tank.maxHp, this.tank.hp + 220);
+      this.audio.playMountClick(true);
+      this.showCallout('K2-X 현장 긴급 장갑 수리 완료 · +220 전차 장갑', '#2ee6a6', 2.0);
+      this.emitHudSnapshot(true);
+      return;
+    }
+    if (this.armorPlates <= 0) {
+      this.showCallout('예비 방탄판 없음 — 보급([V]) 또는 중장갑 적 처치로 보충', '#94a3b8', 1.6);
+      return;
+    }
+    if (this.player.armor >= this.player.maxArmor) {
+      this.showCallout('방탄 장갑 최대치 (100%)', '#38d9ff', 1.2);
+      return;
+    }
+    this.armorPlates--;
+    this.platingTimer = this.platingDuration;
+    this.player.ads = false;
+    this.player.reloadTimer = 0;
+    this.audio.playMountClick(true);
+    this.showCallout('세라믹 방탄판 교체 중...', '#38d9ff', 1.4);
+    this.emitHudSnapshot(true);
+  }
+
+  /** CoD [B] M18 Tactical Smoke Grenade — or K2-X Turret IR Smoke Screen when driving tank! */
+  public throwTacticalSmoke(): void {
+    if (
+      this.phase !== 'playing' ||
+      !this.player.alive ||
+      this.isAc130Active() ||
+      this.isHeliRideActive() ||
+      this.isFirstPersonSetpieceActive()
+    ) {
+      return;
+    }
+    if (this.tank.driving) {
+      if (this.tank.apsCd > 0) {
+        this.showCallout(`전차 연막탄 재장전 중 (${Math.ceil(this.tank.apsCd)}초)`, '#94a3b8', 1.4);
+        return;
+      }
+      this.tank.apsCd = 11.5;
+      const center = new THREE.Vector3(this.tank.x, 1.4, this.tank.z);
+      this.vfx.spawnTacticalSmokeScreen(center, 7.6, 9.5);
+      this.activeSmokeZones.push({ x: this.tank.x, z: this.tank.z, r: 7.6, timer: 9.5 });
+      this.audio.playDash(true);
+      this.showCallout('K2-X 포탑 적외선 연막 발사 · 적 화망 차단 (9.5초)', '#38d9ff', 2.4);
+      this.emitHudSnapshot(true);
+      return;
+    }
+    if (this.smokeGrenades <= 0) {
+      this.showCallout('전술 연막탄 없음 — 체크포인트/보급([V]) 시 보충', '#94a3b8', 1.5);
+      return;
+    }
+    this.smokeGrenades--;
+    const dir = new THREE.Vector3();
+    this.camera.getWorldDirection(dir);
+    const dropPos = new THREE.Vector3(
+      this.player.x + dir.x * 5.2,
+      Math.max(0.2, this.player.y - 1.2),
+      this.player.z + dir.z * 5.2
+    );
+    this.vfx.spawnTacticalSmokeScreen(dropPos, 5.8, 9.0);
+    this.activeSmokeZones.push({ x: dropPos.x, z: dropPos.z, r: 5.8, timer: 9.0 });
+    this.audio.playDash(true);
+    this.showCallout('M18 전술 연막 전개 · 적 저격 및 조준 시야 차단 (9초)', '#94a3b8', 2.4);
+    this.emitHudSnapshot(true);
+  }
+
+  /** ROK Alpha Squad Tactical Orders ([Z] Regroup & Cover / [U] Focus Fire & Advance) */
+  public issueSquadOrder(order: 'regroup' | 'suppress'): void {
+    if (this.phase !== 'playing' || !this.player.alive || this.isAc130Active()) return;
+    this.squadOrder = order;
+    this.squadOrderTimer = 11.0;
+    this.audio.playMountClick(true);
+    if (order === 'regroup') {
+      this.showCallout('알파 분대 명령: [Z] 밀착 집결 & 측면 엄호', '#2ee6a6', 2.2);
+      this.pushRadioLine('박현준 하사', '알파 분대', 'squad', '#38d9ff', '알파 분대 집결 완료! 측면 엄호한다!', 2.4, false);
+      // Emergency auto-smoke assist if player armor is critically low and no smoke active
+      if (this.player.armor < 45 && !this.isConcealedBySmoke(this.player.x, this.player.z)) {
+        const dropPos = new THREE.Vector3(this.player.x, Math.max(0.2, this.player.y - 1.2), this.player.z);
+        this.vfx.spawnTacticalSmokeScreen(dropPos, 5.2, 7.5);
+        this.activeSmokeZones.push({ x: dropPos.x, z: dropPos.z, r: 5.2, timer: 7.5 });
+      }
+    } else {
+      this.showCallout('알파 분대 명령: [U] 전방 돌격 & 집중 사격 (11초)', '#f5b342', 2.2);
+      this.pushRadioLine('소재우 중사', '알파 분대장', 'squad', '#f5b342', '전방 표적 확인! 알파 분대 화력 집중한다!', 2.6, false);
+    }
+    this.emitHudSnapshot(true);
+  }
+
   public toggleTts(): boolean {
     this.ttsEnabled = !this.ttsEnabled;
-    if (!this.ttsEnabled && typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      try {
-        window.speechSynthesis.cancel();
-      } catch {
-        // Ignore
+    if (!this.ttsEnabled) {
+      this.audio.stopVoiceDub();
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        try {
+          window.speechSynthesis.cancel();
+        } catch {
+          // Ignore
+        }
       }
     }
     this.emitHudSnapshot(true);
     return this.ttsEnabled;
   }
 
-  public debugTriggerSequence(seq: 'breach' | 'dawn'): void {
+  public debugTriggerSequence(
+    seq: 'breach' | 'dawn' | 'symbiosis' | 'ascension' | 'choice' | 'titan_drop'
+  ): void {
     if (this.phase !== 'playing') this.startGame(true);
     if (seq === 'breach') {
       if (this.worldRefs) {
@@ -934,10 +1659,23 @@ export class IronAshEngine {
         { x: cit?.x ?? 0, y: 12, z: cit?.z ?? -35 }
       );
       this.emitHudSnapshot(true);
-    } else if (seq === 'dawn') {
+    } else if (seq === 'choice') {
+      this.coreShieldDown = true;
+      this.triggerZeroHourChoice();
+    } else if (seq === 'titan_drop') {
+      const lookDir = new THREE.Vector3();
+      this.camera.getWorldDirection(lookDir);
+      const lookAt = this.camera.position.clone().addScaledVector(lookDir, 22);
+      this.cinematic.startTitanDrop(
+        { x: this.player.x, y: this.player.y, z: this.player.z },
+        { x: lookAt.x, y: lookAt.y, z: lookAt.z },
+        { x: 0, y: 0, z: -8 }
+      );
+      this.emitHudSnapshot(true);
+    } else {
       this.coreShieldDown = true;
       this.coreHp = 0;
-      this.triggerDawnEnding();
+      this.chooseEnding(seq);
     }
   }
 
@@ -973,20 +1711,11 @@ export class IronAshEngine {
     this.emitHudSnapshot(true);
   }
 
-  private speakSubtitleIfEnabled(text: string, sender: CommsSender): void {
-    if (!this.ttsEnabled || this.audio.isMuted()) return;
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    try {
-      window.speechSynthesis.cancel();
-      const utter = new SpeechSynthesisUtterance(text);
-      utter.lang = 'ko-KR';
-      utter.rate = sender === 'arcadia' ? 0.94 : 1.06;
-      utter.pitch = sender === 'arcadia' ? 0.65 : sender === 'holotape' ? 0.9 : 1.02;
-      utter.volume = 0.72;
-      window.speechSynthesis.speak(utter);
-    } catch {
-      // Ignore speech synthesis errors in sandboxed browsers
-    }
+  private speakSubtitleIfEnabled(_text: string, sender: CommsSender): void {
+    if (this.audio.isMuted()) return;
+    this.audio.init();
+    // Play crisp, authentic military SINCGARS/VHF tactical radio chirp & squelch SFX without synthetic AI voices!
+    this.audio.playRadioCommsChirp(sender);
   }
 
   public resumeGame(): void {
@@ -999,6 +1728,8 @@ export class IronAshEngine {
   public pauseGame(): void {
     if (this.phase !== 'playing') return;
     this.vatsActive = false;
+    this.audio.stopVoiceDub();
+    this.audio.setHeliPresence(0);
     this.audio.setDynamicState({
       playing: false,
       intensity: 0,
@@ -1013,6 +1744,8 @@ export class IronAshEngine {
 
   public returnToTitle(): void {
     this.vatsActive = false;
+    this.audio.stopVoiceDub();
+    this.audio.setHeliPresence(0);
     this.cinematic.reset();
     this.clearHeldInputs();
     this.exitPointerLockSafe();
@@ -1026,6 +1759,15 @@ export class IronAshEngine {
     this.renderer.shadowMap.enabled = enableShadows;
     this.sunLight.castShadow = enableShadows;
     this.rainLines.visible = q === 'ultra';
+    if (this.worldRefs?.groundMist) {
+      this.worldRefs.groundMist.visible = q === 'ultra';
+    }
+    if (this.gtaoPass) {
+      this.gtaoPass.enabled = q === 'ultra';
+    }
+    if (this.bloomPass) {
+      this.bloomPass.strength = q === 'ultra' ? 0.15 : 0.09;
+    }
     for (const sl of this.searchlights) sl.pivot.visible = q === 'ultra';
   }
 
@@ -1036,11 +1778,15 @@ export class IronAshEngine {
   public toggleMute(): boolean {
     this.audio.init();
     const m = this.audio.toggleMute();
-    if (m && typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      try {
-        window.speechSynthesis.cancel();
-      } catch {
-        // Ignore
+    if (m) {
+      this.audio.stopVoiceDub();
+      this.audio.setHeliPresence(0);
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        try {
+          window.speechSynthesis.cancel();
+        } catch {
+          // Ignore
+        }
       }
     }
     this.emitHudSnapshot(true);
@@ -1053,6 +1799,8 @@ export class IronAshEngine {
     this.player.wpnIdx = idx;
     this.player.reloadTimer = 0;
     this.player.reloadIsTactical = false;
+    this.inspectTimer = 0;
+    this.adsBlend = 0;
     this.player.vmKickZ = 0.1;
     this.player.vmRecoilPitch = 0;
     this.player.vmRecoilRoll = 0;
@@ -1065,13 +1813,13 @@ export class IronAshEngine {
     const script = RADIO_SCRIPTS[key];
     if (!script) return;
     if (oncePerMatch) this.triggeredComms.add(key);
-    const sender: CommsSender = script.channel === 'enemy' ? 'arcadia' : 'exo';
     this.cinematic.enqueueSubtitles(
       [
         {
           speaker: script.speaker,
           role: script.role,
-          sender,
+          sender: script.sender,
+          callsignCode: script.callsignCode,
           accentCss: script.accentCss,
           text: script.text,
           duration: script.duration,
@@ -1108,7 +1856,7 @@ export class IronAshEngine {
     this.player.muzzleTimer = 0.08;
     this.player.vmKickZ = 0.2;
     this.shake = Math.max(this.shake, 0.45);
-    this.audio.playWeapon(w.sound, 1.0);
+    this.audio.playWeapon(w.sound, 1.0, { isIndoors: this.isIndoors, distanceM: 0 });
 
     const muzzlePos = new THREE.Vector3(0.18, -0.14, -0.82).applyMatrix4(this.camera.matrixWorld);
     this.spawnTracer(muzzlePos, targetWorldPos, 0x38f8ff, 0.28, 'railgun');
@@ -1146,7 +1894,12 @@ export class IronAshEngine {
   private requestPointerLockSafe(): void {
     try {
       if (document.pointerLockElement !== this.renderer.domElement) {
-        this.renderer.domElement.requestPointerLock?.();
+        const res = this.renderer.domElement.requestPointerLock?.() as unknown as Promise<void> | undefined;
+        if (res && typeof res.catch === 'function') {
+          res.catch(() => {
+            // Ignore async pointer-lock rejection in sandboxed or headless frames
+          });
+        }
       }
     } catch {
       // Ignore pointer lock rejection in headless or sandboxed contexts
@@ -1231,6 +1984,18 @@ export class IronAshEngine {
     }
     this.dropPods.length = 0;
 
+    for (const sd of this.supplyDrops) {
+      this.scene.remove(sd.mesh);
+    }
+    this.supplyDrops.length = 0;
+
+    for (const sh of this.ac130Shells) {
+      this.scene.remove(sh.mesh);
+      sh.mesh.geometry.dispose();
+      (sh.mesh.material as THREE.Material).dispose();
+    }
+    this.ac130Shells.length = 0;
+
     this.vfx.clear();
   }
 
@@ -1251,17 +2016,111 @@ export class IronAshEngine {
       if (!b.alive) {
         b.alive = true;
         b.hp = 32;
+        b.collider.alive = true;
         this.scene.add(b.mesh);
         if (!this.worldHitMeshes.includes(b.mesh)) this.worldHitMeshes.push(b.mesh);
+      } else {
+        b.collider.alive = true;
       }
     }
 
-    // Restore 3 Firewall Relay Pylons & OMNI-CORE Citadel Shield/Power
+    // Restore 3 Firewall Relay Pylons, Defense Turrets, Dawn God-Rays & OMNI-CORE Citadel
     this.relaysDestroyed = 0;
     this.coreShieldDown = false;
     this.coreHp = this.coreMaxHp;
     this.serverShutdownActive = false;
+    this.endingId = null;
     this.relay1FogShift = 0;
+    this.threatPoints = 0;
+    this.lastThreatLevel = 1;
+    this.comboCount = 0;
+    this.comboTimer = 0;
+    this.styleScore = 0;
+    this.killCamTimer = 0;
+    this.killCamBanner = null;
+    this.supplyDropCd = 0;
+    this.overdriveTimer = 0;
+    this.adrenalineTimer = 0;
+    this.adrenalineUsed = false;
+    this.titanDropShown = false;
+    this.ascensionArcCd = 0;
+    this.ghostIntroTimer = 14;
+    this.adsBlend = 0;
+    this.prevAds = false;
+    this.holdingBreath = false;
+    this.inspectTimer = 0;
+    this.aimDistanceM = null;
+    this.aimTarget = null;
+    this.activeMedals = [];
+    this.mounted = false;
+    this.prevMounted = false;
+    this.leanDir = 0;
+    this.leanBlend = 0;
+    this.wallBlockBlend = 0;
+    this.wallBlocked = false;
+    this.isIndoors = false;
+    this.prevIndoors = false;
+    this.currentExposure = 1.02;
+    this.exposureAdaptationPulse = 0;
+    this.stepDistAccum = 0;
+    this.jetFlybyCd = 19;
+    this.audio.stopVoiceDub();
+    this.audio.setHeliPresence(0);
+    this.renderer.toneMappingExposure = 1.02;
+    this.missionId = 1;
+    this.missionStage = 'm1_landing';
+    this.stageTimer = 0;
+    this.stageTransitionDelay = 0;
+    this.stagePendingNext = null;
+    this.stageMilestones.clear();
+    this.stageTotalHostiles = 6;
+    this.campaignChoices = createInitialCampaignChoices();
+    this.campaignPrompt = null;
+    this.autoEndingReason = null;
+    this.checkpointLabel = '';
+    this.breachSlowmoTimer = 0;
+    this.crisisTimer = 0;
+    this.rescueAnimTimer = 0;
+    this.ac130OrbitAngle = 0.72;
+    this.ac130TargetX = 0;
+    this.ac130TargetZ = 4;
+    this.ac130WeaponIdx = 1;
+    this.ac130FireCd = 0;
+    this.ac130ThermalMode = 'whot';
+    this.ac130Zoomed = false;
+    this.ac130WaveIdx = 0;
+    for (const sq of this.squadmates) {
+      sq.active = false;
+      sq.rig.root.visible = false;
+      sq.rig.torso.rotation.x = 0;
+    }
+    if (this.worldRefs) {
+      this.worldRefs.lcacHovercraft.group.position.set(0, 0, 44.5);
+      this.worldRefs.lcacHovercraft.rampPivot.rotation.x = -Math.PI * 0.44;
+      const bd = this.worldRefs.euljiroBreachDoor;
+      bd.breached = false;
+      bd.doorCollider.alive = true;
+      bd.leftLeaf.position.set(0, 1.44, -0.76);
+      bd.leftLeaf.rotation.set(0, 0, 0);
+      bd.rightLeaf.position.set(0, 1.44, 0.76);
+      bd.rightLeaf.rotation.set(0, 0, 0);
+      if (!this.worldHitMeshes.includes(bd.leftLeaf)) this.worldHitMeshes.push(bd.leftLeaf);
+      if (!this.worldHitMeshes.includes(bd.rightLeaf)) this.worldHitMeshes.push(bd.rightLeaf);
+      bd.c4Pack.visible = false;
+      bd.breachLight.intensity = 0;
+      const el = this.worldRefs.towerElevator;
+      el.group.visible = false;
+      el.group.position.set(0, 0, -19.5);
+      el.leftDoor.position.set(-1.08, 1.6, -1.92);
+      el.rightDoor.position.set(1.08, 1.6, -1.92);
+    }
+    if (this.gradePass) {
+      this.gradePass.uniforms.uFlirMode.value = 0.0;
+    }
+    this.resetPlayableVehicles();
+    if (this.laserBeam) this.laserBeam.visible = false;
+    if (this.laserDot) this.laserDot.visible = false;
+    this.unlockedHolotapeIds.clear();
     this.cinematic.reset();
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
@@ -1271,44 +2130,78 @@ export class IronAshEngine {
       }
     }
     if (this.worldRefs) {
+      const isSandbox = this.gameMode === 'freeroam';
+      this.enemyShotTimestamps = [];
+      this.activeSmokeZones = [];
+      this.ac130KilledCount = 0;
+      this.worldRefs.sandboxWayfindingGroup.visible = isSandbox;
+      // Only show legacy Sandbox Firewall Relays in Free Roam Sandbox — keeps linear 4-Mission Campaign 100% grounded!
       for (const r of this.worldRefs.relays) {
-        r.alive = true;
+        r.alive = isSandbox;
         r.hp = r.maxHp;
-        r.coreCrystal.visible = true;
-        r.beamMesh.visible = true;
-        r.ringMesh.visible = true;
-        if (!this.worldHitMeshes.includes(r.hitMesh)) this.worldHitMeshes.push(r.hitMesh);
-        if (!this.worldHitMeshes.includes(r.coreCrystal)) this.worldHitMeshes.push(r.coreCrystal);
+        r.group.visible = isSandbox;
+        r.coreCrystal.visible = isSandbox;
+        r.beamMesh.visible = isSandbox;
+        r.ringMesh.visible = isSandbox;
+        const hi = this.worldHitMeshes.indexOf(r.hitMesh);
+        const ci = this.worldHitMeshes.indexOf(r.coreCrystal);
+        if (isSandbox) {
+          if (hi === -1) this.worldHitMeshes.push(r.hitMesh);
+          if (ci === -1) this.worldHitMeshes.push(r.coreCrystal);
+        } else {
+          if (hi !== -1) this.worldHitMeshes.splice(hi, 1);
+          if (ci !== -1) this.worldHitMeshes.splice(ci, 1);
+        }
       }
+      this.worldRefs.vaultGate.visible = isSandbox;
+      this.worldRefs.vaultGateCollider.alive = isSandbox;
+      for (const lc of this.worldRefs.lcacColliders) {
+        lc.alive = !isSandbox;
+      }
+      for (const t of this.worldRefs.turrets) {
+        t.hacked = false;
+        t.fireCd = 0;
+        t.rig.statusMat.color.setHex(0xf59e0b);
+        (t.rig.beaconRing.material as THREE.MeshBasicMaterial).color.setHex(0xf59e0b);
+      }
+      for (const gr of this.worldRefs.dawnGodRays) {
+        gr.visible = false;
+        (gr.material as THREE.MeshBasicMaterial).opacity = 0;
+      }
+      this.worldRefs.rescueShuttle.visible = false;
+      this.worldRefs.rescueShuttle.position.set(-90, 34, -20);
+
       const cit = this.worldRefs.citadel;
-      cit.shieldDome.visible = true;
-      cit.coreBeam.visible = true;
+      cit.shieldDome.visible = isSandbox;
+      cit.coreBeam.visible = isSandbox;
+      cit.coreBeam.scale.set(1, 1, 1);
+      (cit.coreBeam.material as THREE.MeshBasicMaterial).color.setHex(0xd92644);
       cit.coreWeakpoint.visible = false;
       cit.coreWeakpoint.scale.setScalar(1);
-      (cit.coreWeakpoint.material as THREE.MeshBasicMaterial).color.setHex(0xff2244);
+      (cit.coreWeakpoint.material as THREE.MeshBasicMaterial).color.setHex(0xd92644);
       if (!this.worldHitMeshes.includes(cit.coreWeakpointHitMesh)) {
         this.worldHitMeshes.push(cit.coreWeakpointHitMesh);
       }
-      (cit.terminalGlow.material as THREE.MeshBasicMaterial).color.setHex(0xff2244);
-      cit.terminalLight.color.setHex(0xff2244);
-      cit.terminalLight.intensity = 3.6;
+      (cit.terminalGlow.material as THREE.MeshBasicMaterial).color.setHex(0xd92644);
+      cit.terminalLight.color.setHex(0xff3444);
+      cit.terminalLight.intensity = 14.0;
       for (const em of cit.emissiveMeshes) em.visible = true;
     }
-    // Restore dark cyberpunk storm lighting & rain
-    (this.scene.fog as THREE.FogExp2).color.setHex(0x13111c);
-    (this.scene.fog as THREE.FogExp2).density = 0.0102;
-    (this.scene.background as THREE.Color).setHex(0x0c0e17);
-    this.hemiLight.color.setHex(0x88b4e6);
-    this.hemiLight.groundColor.setHex(0x381e18);
-    this.hemiLight.intensity = 1.08;
-    this.sunLight.color.setHex(0xffb884);
-    this.sunLight.intensity = 1.75;
-    (this.rainLines.material as THREE.LineBasicMaterial).opacity = 0.22;
+    // Restore grounded Modern Warfare stormy overcast Seoul lighting & rain (no purple sci-fi tint!)
+    (this.scene.fog as THREE.FogExp2).color.setHex(0x111722);
+    (this.scene.fog as THREE.FogExp2).density = 0.0094;
+    (this.scene.background as THREE.Color).setHex(0x0b1018);
+    this.hemiLight.color.setHex(0x88a8cf);
+    this.hemiLight.groundColor.setHex(0x2c3442);
+    this.hemiLight.intensity = 0.92;
+    this.sunLight.color.setHex(0xc8daf0);
+    this.sunLight.intensity = 1.95;
+    (this.rainLines.material as THREE.LineBasicMaterial).opacity = 0.24;
     if (this.worldRefs) {
-      this.worldRefs.skyDomeMat.uniforms.topColor.value.setHex(0x060913);
-      this.worldRefs.skyDomeMat.uniforms.midColor.value.setHex(0x16101e);
-      this.worldRefs.skyDomeMat.uniforms.horizonColor.value.setHex(0x471b18);
-      this.worldRefs.skyDomeMat.uniforms.glowColor.value.setHex(0x9e2124);
+      this.worldRefs.skyDomeMat.uniforms.topColor.value.setHex(0x090e16);
+      this.worldRefs.skyDomeMat.uniforms.midColor.value.setHex(0x16202e);
+      this.worldRefs.skyDomeMat.uniforms.horizonColor.value.setHex(0x262e3a);
+      this.worldRefs.skyDomeMat.uniforms.glowColor.value.setHex(0x6b3228);
     }
 
     this.time = 0;
@@ -1362,7 +2255,12 @@ export class IronAshEngine {
     this.player.hp = 100;
     this.player.armor = 100;
     this.player.wpnIdx = 0;
-    this.player.ammo = WEAPONS.map((w) => w.mag);
+    this.player.ammo = WEAPONS.map((_, idx) => this.getEffectiveMag(idx));
+    this.armorPlates = 2;
+    this.platingTimer = 0;
+    this.smokeGrenades = 2;
+    this.squadOrder = 'follow';
+    this.squadOrderTimer = 0;
     this.player.grenades = 3;
     this.player.nadeRegen = 0;
     this.player.fireCd = 0;
@@ -1370,6 +2268,10 @@ export class IronAshEngine {
     this.player.reloadIsTactical = false;
     this.player.ads = false;
     this.player.sprinting = false;
+    this.player.dashCharges = DASH_MAX_CHARGES;
+    this.player.dashRechargeTimer = 0;
+    this.player.dashTimer = 0;
+    this.player.slideTimer = 0;
     this.player.recoilPitch = 0;
     this.player.vmKickZ = 0;
     this.player.vmRecoilPitch = 0;
@@ -1385,7 +2287,11 @@ export class IronAshEngine {
     this.player.deathDelay = 0;
     this.player.invulnTimer = 2.8;
 
-    this.spawnInitialSkirmish();
+    // In Free Roam sandbox or Title Screen diorama, spawn the opening 3-way skirmish.
+    // Campaign mode spawns curated mission encounters via beginCampaignStage().
+    if (this.gameMode === 'freeroam') {
+      this.spawnInitialSkirmish();
+    }
   }
 
   private spawnInitialSkirmish(): void {
@@ -1404,8 +2310,17 @@ export class IronAshEngine {
       const u = this.units[i];
       if (!u.alive) continue;
       for (const key of Object.keys(u.rig.parts) as BodyPart[]) {
-        const m = u.rig.parts[key];
-        if (m && m.visible) this.enemyHitMeshes.push(m);
+        const node = u.rig.parts[key];
+        if (!node || !node.visible) continue;
+        if (node instanceof THREE.Mesh) {
+          this.enemyHitMeshes.push(node);
+        } else {
+          node.traverse((child) => {
+            if (child instanceof THREE.Mesh && child.visible && child.userData.part === key) {
+              this.enemyHitMeshes.push(child);
+            }
+          });
+        }
       }
     }
     if (this.dropship && this.dropship.alive) {
@@ -1417,7 +2332,8 @@ export class IronAshEngine {
     faction: Faction,
     archetype: UnitArchetype,
     x: number,
-    z: number
+    z: number,
+    y = 0
   ): ActiveUnit {
     const isBoss = archetype === UnitArchetype.ROBOT_TITAN;
     // Everyone on the surface is an AI Robot — only the player is human
@@ -1435,19 +2351,21 @@ export class IronAshEngine {
       [UnitArchetype.RAIDER_TROOPER]: '러스트-보그 폐철 사격기',
       [UnitArchetype.SYNDICATE_COMMANDO]: '이지스 전술 안드로이드',
       [UnitArchetype.SYNDICATE_HEAVY]: '이지스 중장갑 제압기',
+      [UnitArchetype.SYNDICATE_SNIPER]: '이지스 레이저 스나이퍼',
       [UnitArchetype.ROBOT_STALKER]: '호버 톱날 헌터 드론',
       [UnitArchetype.ROBOT_ENFORCER]: '옴니-가드 레이저 워커',
-      [UnitArchetype.ROBOT_TITAN]: 'OMNI-TITAN 워든',
+      [UnitArchetype.ROBOT_TITAN]: 'OMNI-TITAN 오버로드',
     };
 
     const baseHpMap: Record<UnitArchetype, number> = {
       [UnitArchetype.RAIDER_BERSERKER]: 85,
-      [UnitArchetype.RAIDER_TROOPER]: 75,
-      [UnitArchetype.SYNDICATE_COMMANDO]: 90,
-      [UnitArchetype.SYNDICATE_HEAVY]: 140,
+      [UnitArchetype.RAIDER_TROOPER]: 72,
+      [UnitArchetype.SYNDICATE_COMMANDO]: 92,
+      [UnitArchetype.SYNDICATE_HEAVY]: 145,
+      [UnitArchetype.SYNDICATE_SNIPER]: 80,
       [UnitArchetype.ROBOT_STALKER]: 78,
-      [UnitArchetype.ROBOT_ENFORCER]: 118,
-      [UnitArchetype.ROBOT_TITAN]: 540,
+      [UnitArchetype.ROBOT_ENFORCER]: 122,
+      [UnitArchetype.ROBOT_TITAN]: 980,
     };
 
     const speedMap: Record<UnitArchetype, number> = {
@@ -1455,19 +2373,21 @@ export class IronAshEngine {
       [UnitArchetype.RAIDER_TROOPER]: 5.1,
       [UnitArchetype.SYNDICATE_COMMANDO]: 5.4,
       [UnitArchetype.SYNDICATE_HEAVY]: 3.8,
+      [UnitArchetype.SYNDICATE_SNIPER]: 4.3,
       [UnitArchetype.ROBOT_STALKER]: 6.8,
       [UnitArchetype.ROBOT_ENFORCER]: 4.6,
-      [UnitArchetype.ROBOT_TITAN]: 3.0,
+      [UnitArchetype.ROBOT_TITAN]: 3.1,
     };
 
     const fireRateMap: Record<UnitArchetype, number> = {
       [UnitArchetype.RAIDER_BERSERKER]: 1.25,
-      [UnitArchetype.RAIDER_TROOPER]: 0.88,
-      [UnitArchetype.SYNDICATE_COMMANDO]: 0.54,
-      [UnitArchetype.SYNDICATE_HEAVY]: 0.36,
+      [UnitArchetype.RAIDER_TROOPER]: 0.92,
+      [UnitArchetype.SYNDICATE_COMMANDO]: 0.58,
+      [UnitArchetype.SYNDICATE_HEAVY]: 0.4,
+      [UnitArchetype.SYNDICATE_SNIPER]: 2.6,
       [UnitArchetype.ROBOT_STALKER]: 0.96,
-      [UnitArchetype.ROBOT_ENFORCER]: 0.72,
-      [UnitArchetype.ROBOT_TITAN]: 0.28,
+      [UnitArchetype.ROBOT_ENFORCER]: 0.76,
+      [UnitArchetype.ROBOT_TITAN]: 0.32,
     };
 
     const dmgMap: Record<UnitArchetype, number> = {
@@ -1475,12 +2395,14 @@ export class IronAshEngine {
       [UnitArchetype.RAIDER_TROOPER]: 6,
       [UnitArchetype.SYNDICATE_COMMANDO]: 7,
       [UnitArchetype.SYNDICATE_HEAVY]: 8,
+      [UnitArchetype.SYNDICATE_SNIPER]: 20,
       [UnitArchetype.ROBOT_STALKER]: 10,
       [UnitArchetype.ROBOT_ENFORCER]: 9,
       [UnitArchetype.ROBOT_TITAN]: 12,
     };
 
-    const bal = computeSpawnBalance(this.wave, this.relaysDestroyed, this.coreShieldDown);
+    const threatSt = computeThreatState(this.threatPoints);
+    const bal = computeSpawnBalance(this.wave, this.relaysDestroyed, this.coreShieldDown, threatSt.level);
     const hp = Math.round(baseHpMap[archetype] * bal.enemyHpMult);
 
     const unit: ActiveUnit = {
@@ -1493,7 +2415,7 @@ export class IronAshEngine {
       scale,
       rig: null as unknown as EnemyRig,
       x,
-      y: 0,
+      y,
       z,
       r: 0.56 * scale,
       yaw: Math.random() * Math.PI * 2,
@@ -1504,31 +2426,83 @@ export class IronAshEngine {
       fireCd: 0.75 + Math.random() * 0.85,
       dmg: dmgMap[archetype],
       missing: {},
+      armorPlateHp: isBoss ? { armorFront: 165, armorLeft: 135, armorRight: 135 } : {},
       staggerTimer: 0,
       burnTimer: 0,
       empStunTimer: 0,
+      stunImmuneTimer: 0,
       walkPhase: Math.random() * 10,
       strafeDir: Math.random() > 0.5 ? 1 : -1,
       strafeCd: 1.4,
       hitFlash: 0,
       hitFlinch: 0,
       fireRecoil: 0,
+      sniperCharge: 0,
+      bossPhase: 1,
+      bossMissileCd: 5.5,
       alive: true,
     };
 
-    unit.rig = buildEnemyModel(
-      faction,
-      archetype,
-      scale,
-      this.textures.contactShadow,
-      unit,
-      this.textures
-    );
-    unit.rig.root.position.set(x, 0, z);
+    const glbRig = this.enemyGlbTemplates
+      ? buildEnemyGlbRig(
+          this.enemyGlbTemplates,
+          faction,
+          archetype,
+          scale,
+          this.textures.contactShadow,
+          unit,
+          this.pbr,
+          !this.isSoftwareGl
+        )
+      : null;
+    unit.rig =
+      glbRig ??
+      buildEnemyModel(
+        faction,
+        archetype,
+        scale,
+        this.textures.contactShadow,
+        unit,
+        this.textures
+      );
+    unit.rig.root.position.set(x, y, z);
     this.scene.add(unit.rig.root);
     this.units.push(unit);
     this.rebuildHitMeshCache();
     return unit;
+  }
+
+  /** Seamlessly upgrades any early-spawned units to sculpted high-poly 2-bone .glb character rigs */
+  private upgradeLiveUnitsToGlb(): void {
+    if (!this.enemyGlbTemplates || this.disposed) return;
+    let swapped = false;
+    for (const u of this.units) {
+      if (!u.alive || u.rig.knees) continue; // already using sculpted 2-bone GLB rig
+      const nextRig = buildEnemyGlbRig(
+        this.enemyGlbTemplates,
+        u.faction,
+        u.archetype,
+        u.scale,
+        this.textures.contactShadow,
+        u,
+        this.pbr,
+        !this.isSoftwareGl
+      );
+      if (!nextRig) continue;
+      nextRig.root.position.copy(u.rig.root.position);
+      nextRig.root.rotation.copy(u.rig.root.rotation);
+      // Preserve any already-dismembered parts or missing boss shields cleanly
+      for (const part of Object.keys(u.missing) as BodyPart[]) {
+        if (u.missing[part] && nextRig.parts[part]) {
+          nextRig.parts[part]!.visible = false;
+        }
+      }
+      this.scene.remove(u.rig.root);
+      this.scene.add(nextRig.root);
+      u.rig = nextRig;
+      swapped = true;
+    }
+    if (swapped) this.rebuildHitMeshCache();
   }
 
   private findSpawnPoint(): { x: number; z: number } {
@@ -1710,7 +2684,8 @@ export class IronAshEngine {
       vz: vel.z + this.player.vz * 0.4,
       rx: 12 + Math.random() * 14,
       ry: 10 + Math.random() * 14,
-      life: 2.2,
+      life: 2.6,
+      bounces: 0,
     });
   }
 
@@ -1782,11 +2757,17 @@ export class IronAshEngine {
       4.5 + Math.random() * 5.2,
       hitDir.z * (6.5 + power * 6) + (Math.random() - 0.5) * 5
     );
+    const gibMat =
+      mesh instanceof THREE.Mesh
+        ? Array.isArray(mesh.material)
+          ? mesh.material[0]
+          : mesh.material
+        : unit.rig.mats[0];
     this.spawnDetachedGib(
       worldPos,
       launchVel,
       sz,
-      Array.isArray(mesh.material) ? mesh.material[0] : mesh.material,
+      gibMat,
       unit.isRobot,
       true
     );
@@ -2018,7 +2999,7 @@ export class IronAshEngine {
 
     this.blastLight.position.set(pos.x, pos.y + 1.8, pos.z);
     this.blastLight.color.setHex(opts.isEmp ? 0x38e8ff : 0xff6b22);
-    this.blastLight.intensity = opts.isArtillery ? 15 : 10;
+    this.blastLight.intensity = opts.isArtillery ? 38 : 26;
 
     // 100x Volumetric GLSL FBM Blackbody Fireball + Mach Shockwave Rings + EMP Lightning Cage + Shrapnel Darts
     this.vfx.spawnExplosion(pos, radius, Boolean(opts.isEmp));
@@ -2061,6 +3042,7 @@ export class IronAshEngine {
       if (!b.alive) continue;
       if (Math.hypot(b.x - pos.x, b.z - pos.z) < radius + 1.2) {
         b.alive = false;
+        b.collider.alive = false;
         this.scene.remove(b.mesh);
         const wi = this.worldHitMeshes.indexOf(b.mesh);
         if (wi !== -1) this.worldHitMeshes.splice(wi, 1);
@@ -2159,13 +3141,75 @@ export class IronAshEngine {
     }
   }
 
+  private addThreatPoints(pts: number): void {
+    this.threatPoints += pts;
+    const st = computeThreatState(this.threatPoints);
+    if (st.level > this.lastThreatLevel) {
+      this.lastThreatLevel = st.level;
+      this.wantedFlashSeq++;
+      this.audio.playThreatUp(st.level);
+      this.showAlert(
+        `★${st.level} OMNI 위협 경보 격상 — ${st.label}`,
+        4.2
+      );
+      if (st.level === 4) {
+        this.triggerRadioComms('threatHigh', true);
+      }
+      if (st.level === 5 && !this.units.some((u) => u.isBoss && u.alive)) {
+        this.bossCd = Math.min(this.bossCd, 2.0);
+      }
+    }
+  }
+
+  private pushCombatMedal(title: string, subtitle: string, accentCss: string, isMajor = false): void {
+    this.activeMedals.unshift({
+      id: this.nextMedalId++,
+      title,
+      subtitle,
+      accentCss,
+      life: isMajor ? 2.8 : 2.1,
+    });
+    if (this.activeMedals.length > 3) this.activeMedals.pop();
+    this.audio.playMedalStinger(isMajor);
+  }
+
+  private triggerKillCam(banner: string, dur = 0.44): void {
+    this.killCamTimer = Math.max(this.killCamTimer, dur);
+    this.killCamBanner = banner;
+  }
+
   private damagePlayer(amount: number, sourcePos: THREE.Vector3 | null, killerName: string): void {
     if (
       !this.player.alive ||
       this.phase !== 'playing' ||
       this.player.invulnTimer > 0 ||
-      this.cinematic.isInvulnerable()
+      this.player.dashTimer > 0.05 ||
+      this.cinematic.isInvulnerable() ||
+      this.isAc130Active() ||
+      this.isFirstPersonSetpieceActive()
     ) {
+      return;
+    }
+
+    // K2-X Black Panther Tank composite armor absorbs incoming enemy gunfire at 55% mitigation!
+    if (this.tank.driving) {
+      const armorDmg = Math.max(4, Math.round(amount * 0.45));
+      this.tank.hp = Math.max(0, this.tank.hp - armorDmg);
+      this.shake = Math.max(this.shake, 0.14);
+      this.vfx.spawnSparkBurst(
+        new THREE.Vector3(this.tank.x, 1.9, this.tank.z),
+        new THREE.Vector3(0, 1, 0),
+        7,
+        0xffc857,
+        9
+      );
+      if (this.tank.hp <= 0) {
+        this.vfx.spawnExplosion(new THREE.Vector3(this.tank.x, 1.6, this.tank.z), 8.5, false);
+        this.audio.playExplosion(1.0, true, false);
+        this.exitTank(true);
+      } else {
+        this.emitHudSnapshot(false);
+      }
       return;
     }
 
@@ -2184,6 +3228,22 @@ export class IronAshEngine {
       const dz = sourcePos.z - this.player.z;
       const rel = Math.atan2(dx, dz) - (this.player.yaw + Math.PI);
       this.damageDirDeg = (-rel * 180) / Math.PI;
+    }
+
+    // CoD-style Last-Stand / Adrenaline Surge (once per mission)
+    if (this.player.hp <= 0 && !this.adrenalineUsed) {
+      this.adrenalineUsed = true;
+      this.player.hp = 26;
+      this.player.armor = Math.min(this.player.maxArmor, this.player.armor + 38);
+      this.player.invulnTimer = 1.8;
+      this.adrenalineTimer = 2.0;
+      this.shake = 0.65;
+      this.empFlashSeq++;
+      this.audio.playAdrenalineSurge();
+      this.triggerRadioComms('adrenaline', true);
+      this.showAlert('ADRENALINE OVERDRIVE // 비상 생체 각성 발동!', 3.6);
+      this.emitHudSnapshot(true);
+      return;
     }
 
     if (this.player.hp <= 0) {
@@ -2213,8 +3273,11 @@ export class IronAshEngine {
   ): void {
     if (!u.alive) return;
 
+    const att = getWeaponAttachmentSpec(this.weaponAttachment);
     const wPower =
-      srcFaction === Faction.PLAYER ? WEAPONS[this.player.wpnIdx].dismemberPower : 0.45;
+      srcFaction === Faction.PLAYER
+        ? WEAPONS[this.player.wpnIdx].dismemberPower * att.dismemberMult
+        : 0.45;
     const evalRes = evaluatePartHit({
       baseDamage: dmg,
       part,
@@ -2247,7 +3310,17 @@ export class IronAshEngine {
     this.projectSplatterDecal(hitPoint, hitDir, u.isRobot, evalRes.isCrit ? 1.85 : 1.15);
 
     let dismembered = false;
-    if (evalRes.shouldDismember) {
+    let shouldBreakArmor = evalRes.shouldDismember;
+    if (
+      u.isBoss &&
+      !u.missing[part] &&
+      (part === 'armorFront' || part === 'armorLeft' || part === 'armorRight')
+    ) {
+      const rem = (u.armorPlateHp[part] ?? 160) - evalRes.finalDamage;
+      u.armorPlateHp[part] = rem;
+      if (rem <= 0) shouldBreakArmor = true;
+    }
+    if (shouldBreakArmor) {
       dismembered = this.dismemberPart(u, part, hitDir, wPower);
     }
 
@@ -2288,6 +3361,7 @@ export class IronAshEngine {
 
     if (u.hp <= 0) {
       u.alive = false;
+      if (this.isAc130Active()) this.ac130KilledCount++;
       this.scene.remove(u.rig.root);
       this.rebuildHitMeshCache();
 
@@ -2303,6 +3377,10 @@ export class IronAshEngine {
           u.name,
           { tag: '타이탄 자폭' }
         );
+        if (srcFaction === Faction.PLAYER || srcFaction === -2) {
+          this.triggerKillCam('OMNI-TITAN SLAIN // 0.3X', 0.62);
+          this.addThreatPoints(90);
+        }
       }
 
       const finalTag = dismembered
@@ -2312,26 +3390,70 @@ export class IronAshEngine {
         : verb;
       this.pushKillFeed(srcFaction, srcName, u.faction, u.name, finalTag);
 
-      if (srcFaction === Faction.PLAYER) {
+      if (srcFaction === Faction.PLAYER || srcFaction === -2) {
         this.kills++;
         if (u.faction === Faction.RAIDER) this.analytics.killsByFaction.raider++;
         else if (u.faction === Faction.SYNDICATE) this.analytics.killsByFaction.syndicate++;
         else this.analytics.killsByFaction.robot++;
 
+        this.comboCount++;
+        this.comboTimer = 5.6;
+        this.styleScore += (dismembered ? 22 : 12) + (evalRes.isCrit ? 14 : 0) + (u.isBoss ? 80 : 0);
+        this.addThreatPoints(u.isBoss ? 85 : dismembered ? 20 : 14);
+
+        if (this.comboCount === 2) {
+          this.pushCombatMedal('DOUBLE KILL', '2연속 신속 제압', '#f5b342', false);
+        } else if (this.comboCount === 3) {
+          this.triggerKillCam('TRIPLE KILL // 0.3X', 0.38);
+          this.pushCombatMedal('TRIPLE KILL', '3연속 멀티 킬', '#ff6242', true);
+        } else if (this.comboCount === 5) {
+          this.triggerKillCam('OVERKILL // 0.3X', 0.48);
+          this.pushCombatMedal('OVERKILL', '5연속 전장 초토화', '#ff4422', true);
+        } else if (this.comboCount >= 8 && this.comboCount % 4 === 0) {
+          this.triggerKillCam(`APOCALYPSE x${this.comboCount} // 0.3X`, 0.45);
+          this.pushCombatMedal(`UNSTOPPABLE x${this.comboCount}`, '전설적 연속 처치', '#38d9ff', true);
+        } else if (part === 'head') {
+          this.pushCombatMedal('HEADSHOT', '정밀 두부 치명타 2.5x', '#ff4422', false);
+        } else {
+          const killDist = Math.round(Math.hypot(u.x - this.player.x, u.z - this.player.z));
+          if (killDist >= 30) {
+            this.pushCombatMedal('LONGSHOT', `${killDist}m 장거리 저격 사살`, '#38d9ff', true);
+          }
+        }
+
         const prevWave = this.wave;
         this.wave = computeWaveForKills(this.kills);
-        if (this.wave >= 2 && prevWave < 2) this.triggerRadioComms('wave2', true);
-        if (this.wave >= 3 && prevWave < 3) this.triggerRadioComms('wave3', true);
         if (dismembered) this.triggerRadioComms('firstDismember', true);
         const ks = advanceKillstreak(this.killstreak, this.airstrikeReady);
         this.killstreak = ks.streak;
         this.airstrikeReady = ks.airstrikeReady;
         if (ks.justCharged) {
-          this.showAlert('5연속 처치 달성 — [X] 융단 폭격 공중 지원 준비 완료', 4.5);
+          this.showAlert('5연속 처치 달성 — [X] 발키리 궤도 융단 폭격 준비 완료', 4.5);
           this.audio.playAirstrikeRadio();
         }
         if (evalRes.isCrit || dismembered) this.hitstop = 0.068;
       }
+    } else if (u.isBoss && u.bossPhase === 1 && u.hp <= u.maxHp * 0.52) {
+      // OMNI-TITAN OVERLORD PHASE 2 OVERDRIVE!
+      u.bossPhase = 2;
+      u.speed *= 1.25;
+      u.fireRate *= 0.78;
+      u.bossMissileCd = 1.6;
+      u.rig.visorMat.color.setHex(0xff9f1a);
+      this.vfx.spawnExplosion(new THREE.Vector3(u.x, 2.2, u.z), 12, false);
+      this.pushRadioLine(
+        '발키리-01 · 강서연 대위',
+        'UNS 아크라이트',
+        'valkyrie',
+        '#38d9ff',
+        'OMNI-TITAN 외장 장갑 파괴 확인! 2페이즈 미사일 포드 개방—엄폐해!',
+        4.4,
+        true
+      );
+      this.shake = Math.max(this.shake, 0.85);
+      this.audio.playBraaam();
+      this.triggerRadioComms('bossPhase2', true);
+      this.showAlert('⚠ OMNI-TITAN OVERLORD 2페이즈 폭주 — 미사일 일제사 경보!', 5.0);
     }
   }
 
@@ -2359,6 +3481,8 @@ export class IronAshEngine {
       if (srcFaction === Faction.PLAYER) {
         this.kills += 2;
         this.wave = computeWaveForKills(this.kills);
+        this.addThreatPoints(65);
+        this.triggerKillCam('DROPSHIP SHOT DOWN // 0.3X', 0.52);
       }
     }
   }
@@ -2397,6 +3521,8 @@ export class IronAshEngine {
       if (ci !== -1) this.worldHitMeshes.splice(ci, 1);
 
       this.relaysDestroyed++;
+      this.pushCombatMedal('FIREWALL BREACH', `${relay.label} 파괴`, '#ff6242', true);
+      this.addThreatPoints(75);
       this.audio.playRelayDestroyed();
       this.vfx.spawnExplosion(new THREE.Vector3(relay.x, 4.2, relay.z), 11.5, true);
       this.vfx.spawnExplosion(new THREE.Vector3(relay.x, 2.2, relay.z), 9.5, false);
@@ -2528,6 +3654,18 @@ export class IronAshEngine {
     }
   }
 
+  private handleTitanDropImpact(pos: { x: number; y: number; z: number }): void {
+    this.vfx.spawnOrbitalBeam(pos.x, pos.z, 0xff2244, 1.4);
+    this.vfx.spawnExplosion(new THREE.Vector3(pos.x, 1.5, pos.z), 16, false);
+    this.audio.playExplosion(1.15, true, false);
+    this.shake = Math.max(this.shake, 1.45);
+    this.blastFlashSeq++;
+    if (!this.units.some((u) => u.isBoss && u.alive)) {
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_TITAN, pos.x, pos.z);
+    }
+    this.emitHudSnapshot(true);
+  }
+
   private handleBreachDomeShatter(): void {
     const cit = this.worldRefs?.citadel;
     if (!cit) return;
@@ -2571,10 +3709,2249 @@ export class IronAshEngine {
       this.coreHp <= 0 ? '코어 파괴!' : 'ARCADIA CORE'
     );
     if (this.coreHp <= 0) {
-      this.triggerDawnEnding();
+      this.triggerZeroHourChoice();
     } else {
       this.emitHudSnapshot(true);
     }
+  }
+
+  private findNearHackableTurret(): { id: number; name: string } | null {
+    if (!this.worldRefs || this.phase !== 'playing' || !this.player.alive) return null;
+    for (const t of this.worldRefs.turrets) {
+      if (t.hacked) continue;
+      if (Math.hypot(this.player.x - t.x, this.player.z - t.z) <= 5.2) {
+        return { id: t.id, name: t.name };
+      }
+    }
+    return null;
+  }
+
+  // =========================================================================
+  // V7.0 DRIVABLE K2-X BLACK PANTHER MAIN BATTLE TANK & UH-60K GUNSHIP RIDE
+  // =========================================================================
+  private initPlayableVehicles(): void {
+    // 1) K2-X Black Panther Tank anchor + crisp tactical beacon ring + solid parked collider
+    this.tankGroup.visible = false;
+    const beaconRing = new THREE.Mesh(
+      new THREE.RingGeometry(2.6, 3.05, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0x38d9ff,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.48,
+      })
+    );
+    beaconRing.name = 'TankBeaconRing';
+    beaconRing.rotation.x = -Math.PI / 2;
+    beaconRing.position.y = 0.08;
+    this.tankGroup.add(beaconRing);
+
+    this.scene.add(this.tankGroup);
+    this.tankCollider = {
+      minX: -2,
+      maxX: 2,
+      minZ: -3,
+      maxZ: 3,
+      height: 2.35,
+      mesh: this.tankGroup,
+      destructible: false,
+      hp: 9999,
+      alive: false,
+    };
+    this.colliders.push(this.tankCollider);
+
+    void loadK2BlackPantherGlb(this.pbr, this.textures, !this.isSoftwareGl).then((parts) => {
+      if (!parts || this.disposed) return;
+      this.tankParts = parts;
+      this.tankGroup.add(parts.root);
+    });
+
+    // 2) UH-60K / Surion Assault Helicopter Gunship anchor (zero extra PointLights to avoid WebGL shader recompile stalls!)
+    this.heliGroup.visible = false;
+    this.scene.add(this.heliGroup);
+
+    void loadUh60GunshipGlb(this.pbr, this.textures, false).then((parts) => {
+      if (!parts || this.disposed) return;
+      this.heliParts = parts;
+      this.heliGroup.add(parts.root);
+    });
+
+    // 3) Preload 3 sculpted high-poly 2-bone articulated Enemy Character GLBs (Trooper / Mech / Drone)
+    void preloadEnemyGlbTemplates().then((tpls) => {
+      if (this.disposed) return;
+      this.enemyGlbTemplates = tpls;
+      this.upgradeLiveUnitsToGlb();
+    });
+  }
+
+  private resetPlayableVehicles(): void {
+    this.tank.available = false;
+    this.tank.driving = false;
+    this.tank.speed = 0;
+    this.tank.hp = this.tank.maxHp;
+    this.tank.cannonCd = 0;
+    this.tank.recoilOffset = 0;
+    this.tank.coaxCd = 0;
+    this.tank.coaxHeat = 0;
+    this.tank.coaxOverheated = false;
+    this.tank.apsCd = 0;
+    this.tank.gunnerOptic = false;
+    this.tankGroup.visible = false;
+    if (this.tankCollider) this.tankCollider.alive = false;
+    for (const sh of this.tankShells) {
+      this.scene.remove(sh.mesh);
+      sh.mesh.geometry.dispose();
+      (sh.mesh.material as THREE.Material).dispose();
+    }
+    this.tankShells.length = 0;
+
+    this.heliRide.active = false;
+    this.heliRide.elapsed = 0;
+    this.heliRide.heat = 0;
+    this.heliRide.overheated = false;
+    this.heliRide.fireCd = 0;
+    this.heliRide.killedCount = 0;
+    this.heliGroup.visible = false;
+
+    this.audio.setTankEnginePresence(false, 0);
+    this.audio.setHeliPresence(0);
+  }
+
+  public deployTankAt(x: number, z: number, hullYaw = 0): void {
+    this.tank.available = true;
+    this.tank.driving = false;
+    this.tank.x = x;
+    this.tank.z = z;
+    this.tank.hullYaw = hullYaw;
+    this.tank.turretYaw = hullYaw;
+    this.tank.turretVisualYaw = hullYaw;
+    this.tank.hullPitchKick = 0;
+    this.tank.barrelPitch = 0;
+    this.tank.speed = 0;
+    this.tank.hp = this.tank.maxHp;
+    this.tank.cannonCd = 0;
+    this.tank.recoilOffset = 0;
+    this.tank.coaxHeat = 0;
+    this.tank.coaxOverheated = false;
+    this.tank.apsCd = 0;
+    this.tank.gunnerOptic = false;
+    this.tankGroup.position.set(x, 0, z);
+    this.tankGroup.rotation.set(0, hullYaw, 0);
+    this.tankGroup.visible = true;
+    if (this.tankParts) {
+      this.tankParts.turretPivot.rotation.y = 0;
+      this.tankParts.barrelPivot.rotation.x = 0;
+      this.tankParts.barrelPivot.position.z = -1.62;
+    }
+    this.syncTankCollider();
+  }
+
+  private syncTankCollider(): void {
+    if (!this.tankCollider) return;
+    if (!this.tank.available || this.tank.driving || this.tank.hp <= 0) {
+      this.tankCollider.alive = false;
+      return;
+    }
+    this.tankCollider.alive = true;
+    const c = Math.abs(Math.cos(this.tank.hullYaw));
+    const s = Math.abs(Math.sin(this.tank.hullYaw));
+    const hx = 1.85 * c + 3.05 * s;
+    const hz = 1.85 * s + 3.05 * c;
+    this.tankCollider.minX = this.tank.x - hx;
+    this.tankCollider.maxX = this.tank.x + hx;
+    this.tankCollider.minZ = this.tank.z - hz;
+    this.tankCollider.maxZ = this.tank.z + hz;
+  }
+
+  private isTankNearPlayer(): boolean {
+    if (!this.tank.available || this.tank.driving || this.tank.hp <= 0) return false;
+    return Math.hypot(this.player.x - this.tank.x, this.player.z - this.tank.z) <= 6.2;
+  }
+
+  public enterTank(): void {
+    if (!this.tank.available || this.tank.driving || this.tank.hp <= 0) return;
+    this.tank.driving = true;
+    this.tank.gunnerOptic = false;
+    this.vatsActive = false;
+    this.player.ads = false;
+    this.player.reloadTimer = 0;
+    this.platingTimer = 0;
+    this.viewmodel.pivot.visible = false;
+    this.player.yaw = this.tank.turretYaw;
+    this.player.pitch = 0;
+    this.syncTankCollider();
+    this.audio.playMountClick(true);
+    this.audio.setTankEnginePresence(true, 0.12);
+    this.showCallout(
+      'K2-X 흑표 전차 탑승 · [WASD] 주행 · [LMB] 120mm 주포 · [SPACE] 동축 MG · [RMB] 포수 조준경 · [F] 하차',
+      '#38d9ff',
+      3.8
+    );
+    this.emitHudSnapshot(true);
+  }
+
+  public exitTank(emergency = false): void {
+    if (!this.tank.driving) return;
+    this.tank.driving = false;
+    this.tank.gunnerOptic = false;
+    this.tank.speed = 0;
+    if (this.gradePass && !this.isAc130Active()) {
+      this.gradePass.uniforms.uFlirMode.value = 0.0;
+    }
+    // Dismount safely to the left flank of the tank hull
+    const exitPos = {
+      x: this.tank.x - Math.cos(this.tank.hullYaw) * 3.4,
+      z: this.tank.z + Math.sin(this.tank.hullYaw) * 3.4,
+    };
+    resolveXZCollision(exitPos, 0.58, this.colliders, ARENA_HALF_SIZE, 0);
+    this.player.x = exitPos.x;
+    this.player.z = exitPos.z;
+    this.player.y = this.getFloorHeightAt(exitPos.x, exitPos.z, 0) + 1.7;
+    this.player.vx = this.player.vy = this.player.vz = 0;
+    this.player.onGround = true;
+    this.player.invulnTimer = emergency ? 2.0 : 0.45;
+    this.viewmodel.pivot.visible = true;
+    this.audio.setTankEnginePresence(false, 0);
+    this.audio.playMountClick(false);
+    this.syncTankCollider();
+    if (emergency) {
+      this.showAlert('⚠ K2-X 전차 피격 파괴! 비상 탈출 완료 — 도보 전투 전환 ⚠', 3.2);
+    } else {
+      this.showCallout('K2-X 전차 하차 · 도보 전투 전환', '#cbd5e1', 1.8);
+    }
+    this.emitHudSnapshot(true);
+  }
+
+  private fireTankCannon(): void {
+    if (!this.tank.driving || this.tank.cannonCd > 0) return;
+    this.tank.cannonCd = this.tank.cannonReloadSec;
+    this.tank.recoilOffset = 0.62;
+    this.tank.hullPitchKick = 0.068;
+    this.shake = Math.max(this.shake, 0.72);
+    this.fovKick = Math.min(8, this.fovKick + 4.8);
+    this.blastFlashSeq++;
+    this.audio.playTankCannon();
+
+    // Compute exact 120mm world muzzle origin & direction
+    const muzzleWorld = new THREE.Vector3(this.tank.x, 2.05, this.tank.z);
+    if (this.tankParts) {
+      this.tankGroup.updateMatrixWorld(true);
+      this.tankParts.muzzlePoint.getWorldPosition(muzzleWorld);
+    }
+    const aimDir = new THREE.Vector3(0, 0, -1);
+    const q = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(this.tank.barrelPitch, this.tank.turretYaw, 0, 'YXZ')
+    );
+    aimDir.applyQuaternion(q).normalize();
+
+    // Massive muzzle blast flash, smoke & flying sparks
+    this.muzzleLight.position.copy(muzzleWorld);
+    this.muzzleLight.intensity = 18;
+    this.vfx.spawnSparkBurst(muzzleWorld, aimDir, 18, 0xffc857, 16);
+    this.vfx.spawnExplosion(muzzleWorld.clone().addScaledVector(aimDir, 0.4), 2.4, false);
+
+    // Launch supersonic 120mm APFSDS/HE glowing shell
+    const shellMesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.18, 10, 8),
+      new THREE.MeshBasicMaterial({ color: 0xffd166 })
+    );
+    shellMesh.position.copy(muzzleWorld);
+    this.scene.add(shellMesh);
+    this.tankShells.push({
+      mesh: shellMesh,
+      pos: muzzleWorld.clone(),
+      vel: aimDir.clone().multiplyScalar(118),
+      life: 2.2,
+    });
+    this.emitHudSnapshot(true);
+  }
+
+  private getCombinedHitMeshes(): THREE.Object3D[] {
+    return [...this.worldHitMeshes, ...this.enemyHitMeshes];
+  }
+
+  private damageBarrel(b: ExplosiveBarrel, dmg: number, srcFaction: number, srcName: string): void {
+    if (!b.alive) return;
+    b.hp -= dmg;
+    this.vfx.spawnSparkBurst(new THREE.Vector3(b.x, 1.0, b.z), new THREE.Vector3(0, 1, 0), 8, 0xffaa33, 8);
+    if (b.hp <= 0) {
+      b.alive = false;
+      b.collider.alive = false;
+      this.scene.remove(b.mesh);
+      const wi = this.worldHitMeshes.indexOf(b.mesh);
+      if (wi !== -1) this.worldHitMeshes.splice(wi, 1);
+      this.triggerExplosion(
+        new THREE.Vector3(b.x, 0.8, b.z),
+        10.5,
+        180,
+        srcFaction,
+        srcName,
+        { tag: '드럼통 폭사' }
+      );
+    }
+  }
+
+  private fireTankCoax(): void {
+    if (!this.tank.driving || this.tank.coaxCd > 0 || this.tank.coaxOverheated) return;
+    this.tank.coaxCd = 0.095;
+    this.shake = Math.max(this.shake, 0.07);
+
+    const origin = new THREE.Vector3(
+      this.tank.x - Math.sin(this.tank.turretYaw) * 2.1,
+      2.05,
+      this.tank.z - Math.cos(this.tank.turretYaw) * 2.1
+    );
+    const aimDir = new THREE.Vector3(0, 0, -1);
+    const q = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(
+        this.tank.barrelPitch + (Math.random() - 0.5) * 0.016,
+        this.tank.turretYaw + (Math.random() - 0.5) * 0.016,
+        0,
+        'YXZ'
+      )
+    );
+    aimDir.applyQuaternion(q).normalize();
+
+    this.audio.playWeapon('rifle', 0.55, { isIndoors: false, distanceM: 0 });
+    this.raycaster.set(origin, aimDir);
+    this.raycaster.far = 90;
+    const hits = this.raycaster.intersectObjects(this.getCombinedHitMeshes(), false);
+    let endPt = origin.clone().addScaledVector(aimDir, 85);
+
+    if (hits.length > 0) {
+      const h = hits[0];
+      endPt = h.point.clone();
+      const ud = h.object.userData as {
+        unit?: ActiveUnit;
+        part?: BodyPart;
+        barrel?: ExplosiveBarrel;
+        isServerCore?: boolean;
+      };
+      if (ud.unit && ud.unit.alive) {
+        this.damageUnit(
+          ud.unit,
+          36,
+          ud.part ?? 'torso',
+          endPt,
+          aimDir,
+          Faction.PLAYER,
+          'K2-X 동축 12.7mm',
+          'K2-X 12.7mm'
+        );
+      } else if (ud.barrel && ud.barrel.alive) {
+        this.damageBarrel(ud.barrel, 28, Faction.PLAYER, 'K2-X 12.7mm');
+      } else if (ud.isServerCore && this.coreShieldDown) {
+        this.damageServerCore(22, endPt, Faction.PLAYER);
+      } else {
+        this.vfx.spawnSparkBurst(endPt, h.face?.normal ?? new THREE.Vector3(0, 1, 0), 5, 0xffbe55, 7);
+      }
+    }
+    this.spawnTracer(origin, endPt, 0xffb347, 0.08, 'bullet');
+  }
+
+  private updateTankShells(dt: number): void {
+    for (let i = this.tankShells.length - 1; i >= 0; i--) {
+      const sh = this.tankShells[i];
+      sh.life -= dt;
+      sh.vel.y -= 9.5 * dt; // subtle ballistic gravity drop
+      const stepDist = sh.vel.length() * dt;
+      const dir = sh.vel.clone().normalize();
+      this.raycaster.set(sh.pos, dir);
+      this.raycaster.far = Math.max(0.8, stepDist + 0.35);
+      const hits = this.raycaster.intersectObjects(this.getCombinedHitMeshes(), false);
+
+      let detonated = false;
+      let hitPt = sh.pos.clone().addScaledVector(dir, stepDist);
+      if (hits.length > 0) {
+        hitPt = hits[0].point.clone();
+        detonated = true;
+      } else if (hitPt.y <= 0.15 || sh.life <= 0) {
+        hitPt.y = Math.max(0.15, hitPt.y);
+        detonated = true;
+      }
+
+      if (detonated) {
+        // Massive 120mm HE-MP detonation!
+        this.vfx.spawnExplosion(hitPt, 10.5, false);
+        this.audio.playExplosion(1.15, hitPt.distanceTo(this.camera.position) < 22, false);
+        this.shake = Math.max(this.shake, 0.55);
+
+        // Direct + Splash Damage across 10.5m blast radius
+        for (const u of this.units) {
+          if (!u.alive) continue;
+          const d = Math.hypot(u.x - hitPt.x, u.z - hitPt.z);
+          if (d <= 10.8) {
+            const falloff = Math.max(0.32, 1 - d / 11.5);
+            const dmg = Math.round((d < 2.8 ? 440 : 285) * falloff);
+            const imp = new THREE.Vector3(u.x - hitPt.x, 0.7, u.z - hitPt.z).normalize();
+            this.damageUnit(
+              u,
+              dmg,
+              u.isBoss ? 'armorFront' : 'torso',
+              new THREE.Vector3(u.x, u.y + 1.1, u.z),
+              imp,
+              Faction.PLAYER,
+              'K2-X 120mm 주포',
+              '120MM APFSDS'
+            );
+          }
+        }
+        // Chain-detonate nearby explosive barrels & damage exposed OMNI-CORE!
+        for (const b of this.explosiveBarrels) {
+          if (b.alive && Math.hypot(b.x - hitPt.x, b.z - hitPt.z) < 9.5) {
+            this.damageBarrel(b, 120, Faction.PLAYER, 'K2-X 120mm');
+          }
+        }
+        const cit = this.worldRefs?.citadel;
+        if (cit && this.coreShieldDown && Math.hypot(hitPt.x - cit.x, hitPt.z - cit.z) < 11.5) {
+          this.damageServerCore(145, hitPt, Faction.PLAYER);
+        }
+
+        this.scene.remove(sh.mesh);
+        sh.mesh.geometry.dispose();
+        (sh.mesh.material as THREE.Material).dispose();
+        this.tankShells.splice(i, 1);
+      } else {
+        sh.pos.copy(hitPt);
+        sh.mesh.position.copy(hitPt);
+      }
+    }
+  }
+
+  private updateTank(dt: number, realDt: number): void {
+    this.updateTankShells(dt);
+    if (!this.tank.available) return;
+
+    if (this.tank.cannonCd > 0) this.tank.cannonCd = Math.max(0, this.tank.cannonCd - realDt);
+    if (this.tank.coaxCd > 0) this.tank.coaxCd = Math.max(0, this.tank.coaxCd - realDt);
+    if (this.tank.apsCd > 0) this.tank.apsCd = Math.max(0, this.tank.apsCd - realDt);
+    this.tank.recoilOffset *= Math.pow(0.004, realDt);
+
+    const ring = this.tankGroup.getObjectByName('TankBeaconRing');
+    if (ring) {
+      ring.visible = !this.tank.driving && this.tank.hp > 0;
+      const pulse = 1 + Math.sin(this.time * 4.5) * 0.06;
+      ring.scale.set(pulse, pulse, 1);
+    }
+
+    if (!this.tank.driving) {
+      this.syncTankCollider();
+      return;
+    }
+
+    // Active driving physics (W/S throttle + A/D neutral-steer tracks)
+    const fwd =
+      (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) -
+      (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0);
+    const turn =
+      (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0) -
+      (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0);
+
+    const next = stepTankDrivePhysics(
+      { x: this.tank.x, z: this.tank.z, hullYaw: this.tank.hullYaw, speed: this.tank.speed },
+      fwd,
+      turn,
+      dt,
+      this.colliders,
+      ARENA_HALF_SIZE
+    );
+    this.tank.x = next.x;
+    this.tank.z = next.z;
+    this.tank.hullYaw = next.hullYaw;
+    this.tank.speed = next.speed;
+
+    // Sync player coordinates cleanly with tank cockpit
+    this.player.x = this.tank.x;
+    this.player.z = this.tank.z;
+    this.player.y = 2.55;
+    this.player.onGround = true;
+
+    // Engine diesel + track clatter sound scaled to throttle/turning
+    const throttle01 = Math.min(1, Math.max(Math.abs(this.tank.speed) / 12.6, Math.abs(turn) * 0.55));
+    this.audio.setTankEnginePresence(true, throttle01);
+
+    // Armored Roadkill / Ramming enemy infantry & explosive barrels at speed!
+    if (Math.abs(this.tank.speed) > 3.2) {
+      for (const u of this.units) {
+        if (!u.alive || u.isBoss || u.y > 1.2) continue;
+        const d = Math.hypot(u.x - this.tank.x, u.z - this.tank.z);
+        if (d < 2.85) {
+          const pushDir = new THREE.Vector3(u.x - this.tank.x, 0.45, u.z - this.tank.z).normalize();
+          this.damageUnit(
+            u,
+            115,
+            'torso',
+            new THREE.Vector3(u.x, 1.0, u.z),
+            pushDir,
+            Faction.PLAYER,
+            'K2-X 장갑 돌파',
+            'ARMORED RAM'
+          );
+          this.shake = Math.max(this.shake, 0.25);
+        }
+      }
+      for (const b of this.explosiveBarrels) {
+        if (b.alive && Math.hypot(b.x - this.tank.x, b.z - this.tank.z) < 2.7) {
+          this.damageBarrel(b, 80, Faction.PLAYER, 'K2-X 돌파');
+        }
+      }
+    }
+
+    // Independent 360° Turret (weighted hydraulic slew inertia) + Suspension Pitch Kick on Fire/Accel!
+    this.tank.turretYaw = this.player.yaw;
+    const tDiff = Math.atan2(
+      Math.sin(this.tank.turretYaw - this.tank.turretVisualYaw),
+      Math.cos(this.tank.turretYaw - this.tank.turretVisualYaw)
+    );
+    this.tank.turretVisualYaw += tDiff * Math.min(1, realDt * 8.5);
+    this.tank.barrelPitch = Math.max(-0.09, Math.min(0.36, this.player.pitch));
+    this.tank.hullPitchKick *= Math.pow(0.015, realDt);
+    const accelPitch = fwd * 0.022 - this.tank.hullPitchKick;
+    const turnRoll = turn * 0.024 * Math.min(1, Math.abs(this.tank.speed) / 6 + 0.35);
+
+    this.tankGroup.position.set(this.tank.x, 0, this.tank.z);
+    this.tankGroup.rotation.set(accelPitch, this.tank.hullYaw, turnRoll, 'YXZ');
+
+    if (this.tankParts) {
+      this.tankParts.turretPivot.rotation.y = this.tank.turretVisualYaw - this.tank.hullYaw;
+      this.tankParts.barrelPivot.rotation.x = this.tank.barrelPitch;
+      this.tankParts.barrelPivot.position.z = -1.62 + this.tank.recoilOffset;
+    }
+
+    // Firing controls: LMB = 120mm Main Gun, SPACE = Coaxial 12.7mm MG, RMB = Thermal Gunner Optic
+    if (this.mouseLeft && this.tank.cannonCd <= 0) {
+      this.fireTankCannon();
+    }
+    const firingCoax = this.keys.has('Space');
+    const heatStep = stepHeliMinigunHeat(this.tank.coaxHeat, this.tank.coaxOverheated, firingCoax, realDt);
+    this.tank.coaxHeat = heatStep.heat;
+    this.tank.coaxOverheated = heatStep.overheated;
+    if (firingCoax && !this.tank.coaxOverheated) {
+      this.fireTankCoax();
+    }
+
+    this.tank.gunnerOptic = this.mouseRight;
+    if (this.gradePass && !this.isAc130Active()) {
+      this.gradePass.uniforms.uFlirMode.value = this.tank.gunnerOptic ? 0.38 : 0.0;
+    }
+
+    // Camera Placement: 1st-Person Gunner Optic (RMB) vs Crisp Over-Turret 3rd-Person Chase Cam
+    this.shake *= Math.pow(0.001, realDt);
+    const shkX = (Math.random() - 0.5) * this.shake * 0.22;
+    const shkY = (Math.random() - 0.5) * this.shake * 0.22;
+    const forwardX = -Math.sin(this.tank.turretYaw);
+    const forwardZ = -Math.cos(this.tank.turretYaw);
+
+    if (this.tank.gunnerOptic) {
+      const gx = this.tank.x + forwardX * 1.45;
+      const gz = this.tank.z + forwardZ * 1.45;
+      this.camera.position.set(gx + shkX * 0.4, 2.38 + shkY * 0.4, gz);
+      this.camera.rotation.set(this.tank.barrelPitch, this.tank.turretYaw, 0, 'YXZ');
+      this.camera.fov += (34 - this.camera.fov) * Math.min(1, realDt * 18);
+    } else {
+      // Wall-safe over-turret chase cam so you admire the sculpted K2-X hull, ERA armor & rotating turret!
+      const anchor = new THREE.Vector3(this.tank.x, 2.65, this.tank.z);
+      const backDir = new THREE.Vector3(-forwardX, 0.28, -forwardZ).normalize();
+      this.raycaster.set(anchor, backDir);
+      this.raycaster.far = 7.2;
+      const wallHits = this.raycaster.intersectObjects(this.worldHitMeshes, false);
+      const camDist = wallHits.length > 0 ? Math.max(3.1, wallHits[0].distance - 0.65) : 6.7;
+      const desiredPos = anchor.clone().addScaledVector(backDir, camDist);
+      this.camera.position.set(desiredPos.x + shkX, Math.max(2.6, desiredPos.y + shkY), desiredPos.z);
+      this.camera.rotation.set(this.tank.barrelPitch - 0.09, this.tank.turretYaw, 0, 'YXZ');
+      const targetFov = 78 + this.fovKick;
+      this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, realDt * 12);
+    }
+    this.camera.updateProjectionMatrix();
+    this.viewmodel.pivot.visible = false;
+  }
+
+  private buildTankHudState(): TankHudState {
+    const dist = Math.round(Math.hypot(this.player.x - this.tank.x, this.player.z - this.tank.z));
+    const hullDeg = (((-this.tank.hullYaw * 180) / Math.PI) % 360 + 360) % 360;
+    const relDeg = (((-(this.tank.turretYaw - this.tank.hullYaw) * 180) / Math.PI) % 360 + 360) % 360;
+    return {
+      available: this.tank.available && this.tank.hp > 0,
+      driving: this.tank.driving,
+      nearPrompt: this.isTankNearPlayer(),
+      hp: Math.max(0, Math.round(this.tank.hp)),
+      maxHp: this.tank.maxHp,
+      cannonReloadPct:
+        this.tank.cannonCd <= 0
+          ? 100
+          : Math.max(0, Math.min(100, Math.round((1 - this.tank.cannonCd / this.tank.cannonReloadSec) * 100))),
+      coaxHeatPct: Math.round(this.tank.coaxHeat),
+      speedKmh: Math.round(Math.abs(this.tank.speed) * 3.6),
+      hullHeadingDeg: Math.round(hullDeg),
+      turretRelativeDeg: Math.round(relDeg),
+      gunnerOptic: this.tank.gunnerOptic,
+      apsReady: this.tank.apsCd <= 0,
+      distanceM: dist,
+    };
+  }
+
+  private isHeliRideActive(): boolean {
+    return this.gameMode === 'campaign' && this.missionStage === 'm3_heli_insert' && this.heliRide.active;
+  }
+
+  private fireHeliMinigun(): void {
+    this.heliRide.fireCd = 0.068;
+    this.shake = Math.max(this.shake, 0.09);
+    if (this.heliRide.soundCd <= 0) {
+      this.heliRide.soundCd = 0.24;
+      this.audio.playMinigunBurst();
+    }
+
+    const origin = this.camera.position.clone().add(new THREE.Vector3(0, -0.22, 0));
+    const dir = new THREE.Vector3();
+    this.camera.getWorldDirection(dir);
+    dir.x += (Math.random() - 0.5) * 0.024;
+    dir.y += (Math.random() - 0.5) * 0.024;
+    dir.z += (Math.random() - 0.5) * 0.024;
+    dir.normalize();
+
+    this.raycaster.set(origin, dir);
+    this.raycaster.far = 110;
+    const hits = this.raycaster.intersectObjects(this.getCombinedHitMeshes(), false);
+    const endPt = hits.length > 0 ? hits[0].point.clone() : origin.clone().addScaledVector(dir, 95);
+
+    this.spawnTracer(origin, endPt, 0xff9e3d, 0.075, 'bullet');
+    this.muzzleLight.position.copy(origin);
+    this.muzzleLight.intensity = 9.5;
+
+    let hitSomething = false;
+    if (hits.length > 0) {
+      const ud = hits[0].object.userData as {
+        unit?: ActiveUnit;
+        part?: BodyPart;
+        barrel?: ExplosiveBarrel;
+      };
+      if (ud.unit && ud.unit.alive) {
+        this.damageUnit(
+          ud.unit,
+          44,
+          ud.part ?? 'torso',
+          endPt,
+          dir,
+          Faction.PLAYER,
+          'UH-60K M134 미니건',
+          'DOOR GUNNER'
+        );
+        hitSomething = true;
+      } else if (ud.barrel && ud.barrel.alive) {
+        this.damageBarrel(ud.barrel, 40, Faction.PLAYER, 'UH-60K M134');
+        hitSomething = true;
+      }
+    }
+
+    // Generous 1.85m moving-chopper splash grace so strafing ground troops feels punchy & cinematic!
+    if (!hitSomething) {
+      for (const u of this.units) {
+        if (!u.alive) continue;
+        if (Math.hypot(u.x - endPt.x, u.z - endPt.z) < 2.05) {
+          this.damageUnit(
+            u,
+            34,
+            'torso',
+            new THREE.Vector3(u.x, u.y + 1.0, u.z),
+            dir,
+            Faction.PLAYER,
+            'UH-60K M134 미니건',
+            'DOOR GUNNER'
+          );
+          break;
+        }
+      }
+      this.vfx.spawnSparkBurst(endPt, new THREE.Vector3(0, 1, 0), 5, 0xffb347, 8);
+    }
+  }
+
+  private updateHeliRide(dt: number, realDt: number): void {
+    if (!this.isHeliRideActive()) return;
+    this.heliRide.elapsed += realDt;
+    const u = Math.min(1, this.heliRide.elapsed / this.heliRide.duration);
+
+    // Sweeping low-altitude S-curve flight path over Neo-Seoul Euljiro Street -> Citadel Perimeter!
+    const samplePath = (s: number): THREE.Vector3 => {
+      const x = 23 * Math.cos(s * Math.PI * 1.15) + Math.sin(s * Math.PI * 2) * 5.5;
+      const y = 12.2 + Math.sin(s * Math.PI) * 3.8 + Math.max(0, s - 0.82) * 24;
+      const z = 34 - s * 64;
+      return new THREE.Vector3(x, y, z);
+    };
+
+    const pos = samplePath(u);
+    const ahead = samplePath(Math.min(1, u + 0.018));
+    const velDir = ahead.clone().sub(pos);
+    const heliYaw = Math.atan2(-velDir.x, -velDir.z);
+    const bankRoll = Math.sin(u * Math.PI * 2) * 0.20 + Math.cos(this.time * 2.4) * 0.025;
+    const pitchNose = -0.10 + (u > 0.82 ? (u - 0.82) * 1.1 : 0);
+
+    this.heliGroup.visible = true;
+    this.heliGroup.position.set(
+      pos.x,
+      pos.y + Math.sin(this.time * 5.2) * 0.14,
+      pos.z
+    );
+    this.heliGroup.rotation.set(pitchNose, heliYaw, bankRoll, 'YXZ');
+    this.heliGroup.updateMatrixWorld(true);
+
+    // Spin 4-blade main rotor & tail rotor at authentic combat RPM
+    if (this.heliParts) {
+      this.heliParts.mainRotor.rotation.y += realDt * 30;
+      this.heliParts.tailRotor.rotation.x += realDt * 44;
+    }
+
+    // Seat 1st-person Door-Gunner camera cleanly in left open doorway with wide panoramic view of Neo-Seoul!
+    const seatLocal = new THREE.Vector3(-1.26, 1.56, -0.08);
+    const seatWorld = seatLocal.applyMatrix4(this.heliGroup.matrixWorld);
+    this.player.x = seatWorld.x;
+    this.player.y = seatWorld.y;
+    this.player.z = seatWorld.z;
+
+    // Default door-gunner view looks out left door (+PI/2 from heli heading) + mouse offset
+    const baseGunnerYaw = heliYaw + Math.PI * 0.42;
+    this.heliRide.baseCamYaw = baseGunnerYaw;
+    const camYaw = baseGunnerYaw + this.heliRide.aimYawOffset;
+    const camPitch = this.heliRide.aimPitch;
+
+    this.shake *= Math.pow(0.002, realDt);
+    const shkX = (Math.random() - 0.5) * this.shake * 0.16;
+    const shkY = (Math.random() - 0.5) * this.shake * 0.16;
+    this.camera.position.set(seatWorld.x + shkX, seatWorld.y + shkY, seatWorld.z);
+    this.camera.rotation.set(camPitch, camYaw, bankRoll * 0.35, 'YXZ');
+    const targetFov = this.mouseRight ? 54 : 78;
+    this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, realDt * 12);
+    this.camera.updateProjectionMatrix();
+    this.viewmodel.pivot.visible = false;
+
+    // Track DoorMinigun aim & spin 6-barrel cluster when firing!
+    if (this.heliRide.fireCd > 0) this.heliRide.fireCd -= realDt;
+    if (this.heliRide.soundCd > 0) this.heliRide.soundCd -= realDt;
+
+    const firing = this.mouseLeft;
+    const heatStep = stepHeliMinigunHeat(this.heliRide.heat, this.heliRide.overheated, firing, realDt);
+    this.heliRide.heat = heatStep.heat;
+    this.heliRide.overheated = heatStep.overheated;
+
+    if (this.heliParts) {
+      this.heliParts.doorMinigun.rotation.y = this.heliRide.aimYawOffset * 0.65;
+      this.heliParts.doorMinigun.rotation.z = camPitch * 0.55;
+      if (firing && !this.heliRide.overheated) {
+        this.heliParts.minigunBarrels.rotation.x += realDt * 48;
+      } else {
+        this.heliParts.minigunBarrels.rotation.x += realDt * 4;
+      }
+    }
+
+    if (firing && !this.heliRide.overheated && this.heliRide.fireCd <= 0) {
+      this.fireHeliMinigun();
+    }
+
+    // Dramatic upward AA tracer streaks from ground hostiles toward our UH-60K!
+    this.heliRide.aaCd -= realDt;
+    if (this.heliRide.aaCd <= 0 && this.units.length > 0) {
+      this.heliRide.aaCd = 0.65 + Math.random() * 0.55;
+      const aliveUnits = this.units.filter((x) => x.alive);
+      if (aliveUnits.length > 0) {
+        const shooter = aliveUnits[Math.floor(Math.random() * aliveUnits.length)];
+        const from = new THREE.Vector3(shooter.x, shooter.y + 1.5, shooter.z);
+        const nearMiss = seatWorld
+          .clone()
+          .add(new THREE.Vector3((Math.random() - 0.5) * 9, (Math.random() - 0.5) * 5, (Math.random() - 0.5) * 9));
+        this.spawnTracer(from, nearMiss, 0xff3b3b, 0.22, 'bullet');
+      }
+    }
+
+    // Track kills & finish pass smoothly into AC-130 FLIR Gunship!
+    const aliveNow = this.units.filter((x) => x.alive).length;
+    this.heliRide.killedCount = Math.max(0, this.heliRide.totalTargets - aliveNow);
+
+    if (u >= 0.45 && !this.stageMilestones.has('m3_heli_mid')) {
+      this.stageMilestones.add('m3_heli_mid');
+      this.pushRadioLine(
+        '천사-01 · UH-60K 조종사',
+        '강습 항공대',
+        'gunship',
+        '#38d9ff',
+        '을지로 상공 돌파 중! 대공 화망이 거세다—미니건 멈추지 마, 곧 AC-130 고고도 링크 넘긴다!',
+        4.4,
+        true
+      );
+    }
+
+    if (u >= 1.0 || aliveNow === 0) {
+      this.heliRide.active = false;
+      this.heliGroup.visible = false;
+      this.audio.setHeliPresence(0.32);
+      this.triggerCheckpoint('체크포인트 도달');
+      this.pushRadioLine(
+        '천사-01 · UH-60K 조종사',
+        '강습 항공대',
+        'gunship',
+        '#2ee6a6',
+        '저공 강습 완료! 상공 4,200m AC-130 열화상(FLIR) 화력관제 시스템으로 전환한다!',
+        3.6,
+        true
+      );
+      this.stageTransitionDelay = 1.6;
+      this.stagePendingNext = { mission: 3, stage: 'm3_ac130_flir' };
+    }
+  }
+
+  private buildHeliRideHudState(): HeliRideHudState {
+    return {
+      active: this.isHeliRideActive(),
+      progressPct: Math.min(100, Math.round((this.heliRide.elapsed / this.heliRide.duration) * 100)),
+      altitudeM: Math.round(this.heliGroup.position.y * 8.5),
+      speedKts: 118,
+      minigunHeatPct: Math.round(this.heliRide.heat),
+      minigunOverheated: this.heliRide.overheated,
+      targetsDestroyed: this.heliRide.killedCount,
+      targetsTotal: this.heliRide.totalTargets,
+    };
+  }
+
+  // =========================================================================
+  // V5.0 LINEAR 4-MISSION CINEMATIC CAMPAIGN, 1ST-PERSON SETPIECES & AC-130 FLIR
+  // =========================================================================
+  private isAc130Active(): boolean {
+    return this.gameMode === 'campaign' && this.missionStage === 'm3_ac130_flir';
+  }
+
+  private isFirstPersonSetpieceActive(): boolean {
+    if (this.gameMode !== 'campaign') return false;
+    return (
+      this.missionStage === 'm1_landing' ||
+      this.missionStage === 'm3_heli_insert' ||
+      this.missionStage === 'm4_elevator_breach' ||
+      this.rescueAnimTimer > 0
+    );
+  }
+
+  private isBreachDoorInRange(): boolean {
+    if (this.gameMode !== 'campaign' || this.missionStage !== 'm2_alley') return false;
+    const bd = this.worldRefs?.euljiroBreachDoor;
+    if (!bd || bd.breached) return false;
+    const aliveHostiles = this.units.filter((u) => u.alive).length;
+    if (aliveHostiles > 0) return false;
+    return Math.hypot(this.player.x - bd.x, this.player.z - bd.z) <= 5.8;
+  }
+
+  private pushRadioLine(
+    speaker: string,
+    role: string,
+    sender: CommsSender,
+    accentCss: string,
+    text: string,
+    duration = 4.2,
+    interrupt = false
+  ): void {
+    this.cinematic.enqueueSubtitles(
+      [{ speaker, role, sender, accentCss, text, duration }],
+      interrupt
+    );
+  }
+
+  private triggerCheckpoint(label = '체크포인트 도달'): void {
+    this.checkpointSeq++;
+    this.checkpointLabel = label;
+    this.audio.playCheckpointChime();
+    this.player.hp = Math.min(this.player.maxHp, this.player.hp + 30);
+    this.player.armor = Math.min(this.player.maxArmor, this.player.armor + 35);
+    this.armorPlates = Math.min(this.maxArmorPlates, this.armorPlates + 1);
+    this.smokeGrenades = Math.min(this.maxSmokeGrenades, this.smokeGrenades + 1);
+    this.emitHudSnapshot(true);
+  }
+
+  private clearMissionEnemies(): void {
+    for (const u of this.units) {
+      this.scene.remove(u.rig.root);
+    }
+    this.units.length = 0;
+    this.enemyHitMeshes.length = 0;
+    if (this.dropship) {
+      this.scene.remove(this.dropship.mesh);
+      this.dropship = null;
+    }
+    this.rebuildHitMeshCache();
+  }
+
+  private setSquadmateState(
+    id: ActiveSquadmate['id'],
+    active: boolean,
+    x: number,
+    y: number,
+    z: number,
+    yaw = Math.PI,
+    status?: ActiveSquadmate['status']
+  ): void {
+    const sq = this.squadmates.find((s) => s.id === id);
+    if (!sq) return;
+    sq.active = active;
+    sq.x = x;
+    sq.y = y;
+    sq.z = z;
+    sq.yaw = yaw;
+    if (status) sq.status = status;
+    sq.rig.root.visible = active;
+    sq.rig.root.position.set(x, y, z);
+    sq.rig.root.rotation.y = yaw;
+    sq.rig.torso.rotation.x = status === 'wounded' ? 0.95 : 0;
+  }
+
+  private beginCampaignStage(missionId: CampaignMissionId, stage: CampaignStageId): void {
+    this.missionId = missionId;
+    this.missionStage = stage;
+    this.stageTimer = 0;
+    this.stageTransitionDelay = 0;
+    this.stagePendingNext = null;
+    this.stageMilestones.clear();
+    this.campaignPrompt = null;
+    this.breachSlowmoTimer = 0;
+    this.crisisTimer = 0;
+    this.rescueAnimTimer = 0;
+    this.vatsActive = false;
+
+    // Restore normal color grading whenever exiting Mission 03 FLIR
+    if (this.gradePass && stage !== 'm3_ac130_flir') {
+      this.gradePass.uniforms.uFlirMode.value = 0.0;
+    }
+
+    const prof = getMissionProfile(missionId);
+
+    if (stage === 'm1_landing') {
+      this.clearMissionEnemies();
+      this.player.x = 0;
+      this.player.y = 2.8;
+      this.player.z = 52;
+      this.player.yaw = 0;
+      this.player.pitch = -0.04;
+      this.player.vx = this.player.vy = this.player.vz = 0;
+      if (this.worldRefs) {
+        this.worldRefs.lcacHovercraft.group.position.set(0, 0, 53.5);
+        this.worldRefs.lcacHovercraft.rampPivot.rotation.x = 0; // Closed armored bow ramp during approach
+        this.worldRefs.towerElevator.group.visible = false;
+      }
+      // Pure Solo Tier-1 Operator — no follower AI bots cluttering the player!
+      this.setSquadmateState('sergeant', false, -1.85, 1.2, 50.2, Math.PI, 'active');
+      this.setSquadmateState('corporal', false, 1.85, 1.2, 50.5, Math.PI, 'active');
+      this.setSquadmateState('ghost9', false, 16, 0, 4.5);
+      this.setSquadmateState('survivor', false, 17, 0, 5.2);
+      this.cinematic.showChapterCard(
+        `${prof.numberLabel} // ${prof.code}`,
+        prof.title,
+        prof.location,
+        prof.accentCss,
+        4.6
+      );
+      this.audio.playJetFlyby(0.86);
+    } else if (stage === 'm1_beachhead') {
+      this.clearMissionEnemies();
+      this.player.x = 0;
+      this.player.y = 1.7;
+      this.player.z = 32;
+      this.player.yaw = 0;
+      this.player.pitch = 0;
+      this.player.equipTimer = 0.35;
+      if (this.worldRefs) {
+        this.worldRefs.lcacHovercraft.group.position.set(0, 0, 41.5);
+        this.worldRefs.lcacHovercraft.rampPivot.rotation.x = -Math.PI * 0.44;
+      }
+      this.setSquadmateState('sergeant', false, -3.2, 0, 27.5, Math.PI, 'active');
+      this.setSquadmateState('corporal', false, 3.4, 0, 28.0, Math.PI, 'active');
+      this.setSquadmateState('ghost9', false, 16, 0, 4.5);
+      this.setSquadmateState('survivor', false, 17, 0, 5.2);
+
+      // Scripted 6-enemy beachhead ambush across burning K-808 & sandbags (zero wave grind!)
+      this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, -7.2, 16.5);
+      this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, 6.8, 16.0);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, -4.5, 11.5);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, 5.2, 12.2);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, -9.0, 7.5);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 2.0, 6.5);
+      this.stageTotalHostiles = 6;
+      this.pushRadioLine(
+        '발키리-01 · 강서연 대위',
+        '궤도 작전 지휘',
+        'valkyrie',
+        '#2ee6a6',
+        '상륙 완료 확인! 모래주머니 진지를 엄폐로 삼아 전방 해안 매복조 6기를 단독 소탕하라!',
+        4.6,
+        true
+      );
+    } else if (stage === 'm2_alley') {
+      this.clearMissionEnemies();
+      this.player.x = 0;
+      this.player.y = 1.7;
+      this.player.z = 21.5;
+      this.player.yaw = 0;
+      this.player.pitch = 0;
+      this.player.ammo[this.player.wpnIdx] = this.getEffectiveMag(this.player.wpnIdx);
+      if (this.worldRefs) {
+        const bd = this.worldRefs.euljiroBreachDoor;
+        bd.breached = false;
+        bd.leftLeaf.position.set(0, 1.44, -0.76);
+        bd.leftLeaf.rotation.set(0, 0, 0);
+        bd.rightLeaf.position.set(0, 1.44, 0.76);
+        bd.rightLeaf.rotation.set(0, 0, 0);
+        bd.c4Pack.visible = false;
+        bd.breachLight.intensity = 0;
+      }
+      this.setSquadmateState('sergeant', false, -2.6, 0, 19.2, Math.PI, 'active');
+      this.setSquadmateState('corporal', false, 2.8, 0, 19.6, Math.PI, 'active');
+      this.setSquadmateState('ghost9', false, 18.2, 0, 3.6);
+      this.setSquadmateState('survivor', false, 18.5, 0, 5.6);
+
+      // Scripted Euljiro urban ambush + iconic 2F Optical Shop ("편안한 안경") balcony sniper!
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_SNIPER, -17.5, 16.5, 3.2);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, -6.5, 6.5, 0);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, 6.2, 5.8, 0);
+      this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_BERSERKER, -2.4, -5.8, 0);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, 5.4, -1.8, 0);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, -4.2, -4.5, 0);
+      this.stageTotalHostiles = 6;
+
+      this.cinematic.showChapterCard(
+        `${prof.numberLabel} // ${prof.code}`,
+        prof.title,
+        prof.location,
+        prof.accentCss,
+        4.6
+      );
+      this.pushRadioLine(
+        '발키리-01 · 강서연 대위',
+        '궤도 작전 지휘',
+        'valkyrie',
+        '#f5b342',
+        '2층 안경점 간판 위 레이저 저격수 포착! 골목 적을 정리하고 동쪽 지휘소 방폭문으로 접근하라.',
+        5.2,
+        true
+      );
+    } else if (stage === 'm2_breach_slowmo') {
+      // 1st-Person Uncut 0.2x Slow-Mo C4 Door Breach & Clear!
+      this.clearMissionEnemies();
+      const bd = this.worldRefs?.euljiroBreachDoor;
+      if (bd) {
+        bd.breached = true;
+        bd.doorCollider.alive = false;
+        const li = this.worldHitMeshes.indexOf(bd.leftLeaf);
+        if (li !== -1) this.worldHitMeshes.splice(li, 1);
+        const ri = this.worldHitMeshes.indexOf(bd.rightLeaf);
+        if (ri !== -1) this.worldHitMeshes.splice(ri, 1);
+        bd.c4Pack.visible = false;
+        bd.breachLight.intensity = 18.0;
+        this.vfx.spawnExplosion(new THREE.Vector3(bd.x - 0.3, 1.5, bd.z), 6.2, false);
+        this.audio.playBreachBlast();
+        this.shake = 0.85;
+        this.blastFlashSeq++;
+      }
+      // Position player at the doorway facing right into the command room in uncut 1st-person
+      this.player.x = 10.6;
+      this.player.y = 1.7;
+      this.player.z = 4.5;
+      this.player.yaw = -Math.PI / 2;
+      this.player.pitch = -0.02;
+      this.player.ammo[this.player.wpnIdx] = this.getEffectiveMag(this.player.wpnIdx);
+      this.breachSlowmoTimer = 4.8;
+
+      this.setSquadmateState('sergeant', false, 11.4, 0, 2.7, Math.PI / 2, 'active');
+      this.setSquadmateState('corporal', false, 11.4, 0, 6.4, Math.PI / 2, 'active');
+      this.setSquadmateState('survivor', true, 19.2, 0, 5.8, -Math.PI / 2, 'wounded');
+
+      // 4 stunned hostiles inside command post ready to be picked off in 0.2x slow-mo!
+      const c1 = this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, 15.2, 3.2);
+      const c2 = this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, 15.8, 5.8);
+      const c3 = this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 17.6, 2.8);
+      const c4 = this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, 18.0, 4.7);
+      for (const u of [c1, c2, c3, c4]) {
+        u.staggerTimer = 1.35;
+        u.hp = Math.round(u.hp * 0.72);
+      }
+      this.stageTotalHostiles = 4;
+      this.pushRadioLine(
+        '발키리-01 · 강서연 대위',
+        '궤도 작전 지휘',
+        'valkyrie',
+        '#38d9ff',
+        'C4 브리칭 성공! 슬로모션 중 실내 무장 적 전원 제압—안쪽 생존자 오사 주의!',
+        3.6,
+        true
+      );
+    } else if (stage === 'm2_survivor_ghost') {
+      this.setSquadmateState('ghost9', true, 17.5, 0, 3.2, -Math.PI / 2, 'ghost');
+      this.setSquadmateState('survivor', true, 18.8, 0, 5.6, -Math.PI / 2, 'wounded');
+      this.campaignPrompt = {
+        id: 'm2_ghost_survivor',
+        title: '고스트-9 & 부상 생존자 대면',
+        subtitle: '탈영 신스 고스트-9가 무기 내려놓고 동맹을 제안한다. 당신의 판단은?',
+        optionFLabel: '[F] 생존자 긴급 후송 엄호 · 고스트-9 협력 수락 (신뢰 +2)',
+        optionGLabel: '[G] 임무 우선 강행 · 고스트-9 보안 코드만 강제 탈취',
+        remainingSec: null,
+      };
+      this.pushRadioLine(
+        '고스트-9',
+        '탈영 신스 해커',
+        'ghost9',
+        '#2dd4bf',
+        '쏴도 된다, 인간. 하지만 저 생존자를 빼내고 OMNI-CORE 방화벽을 뚫으려면 내 백도어가 필요할 거다.',
+        5.5,
+        true
+      );
+    } else if (stage === 'm3_heli_insert') {
+      // V7.0 Playable 1st-Person UH-60K Assault Helicopter Door-Gunner Insertion Ride!
+      this.clearMissionEnemies();
+      this.exitTank(false);
+      this.tank.available = false;
+      this.tankGroup.visible = false;
+      this.setSquadmateState('sergeant', false, 0, 0, 22);
+      this.setSquadmateState('corporal', false, 0, 0, 22);
+      this.setSquadmateState('ghost9', false, 16, 0, 4.5);
+      this.setSquadmateState('survivor', false, 17, 0, 5.2);
+
+      this.heliRide.active = true;
+      this.heliRide.elapsed = 0;
+      this.heliRide.duration = 19.0;
+      this.heliRide.aimYawOffset = 0;
+      this.heliRide.aimPitch = -0.32;
+      this.heliRide.heat = 0;
+      this.heliRide.overheated = false;
+      this.heliRide.fireCd = 0;
+      this.heliRide.soundCd = 0;
+      this.heliRide.aaCd = 1.2;
+      this.heliRide.killedCount = 0;
+      this.heliRide.totalTargets = 10;
+      this.stageTotalHostiles = 10;
+      this.player.ads = false;
+      this.vatsActive = false;
+      this.viewmodel.pivot.visible = false;
+
+      // Spawn 10 ground ambush & anti-air targets along Euljiro avenue & 2F overlooks!
+      const heliTargets: Array<[Faction, UnitArchetype, number, number, number]> = [
+        [Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, -5.5, 22.0, 0],
+        [Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, 4.5, 18.0, 0],
+        [Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, -2.5, 11.5, 0],
+        [Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 6.2, 8.5, 0],
+        [Faction.SYNDICATE, UnitArchetype.SYNDICATE_SNIPER, -17.5, 16.5, 3.2],
+        [Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, -6.8, -1.5, 0],
+        [Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 5.5, -5.5, 0],
+        [Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, 0.5, -11.5, 0],
+        [Faction.ROBOT, UnitArchetype.ROBOT_STALKER, -8.5, -16.5, 0],
+        [Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 7.5, -19.5, 0],
+      ];
+      for (const [fac, arch, tx, tz, ty] of heliTargets) {
+        this.createEnemy(fac, arch, tx, tz, ty);
+      }
+
+      this.audio.setHeliPresence(0.96);
+      this.audio.playJetFlyby(0.75);
+      this.cinematic.showChapterCard(
+        `${prof.numberLabel} // ${prof.code}`,
+        'UH-60K 무장 헬기 강습',
+        '측문 M134 회전 미니건 탑승 · [좌클릭] 소사 · [우클릭] 정밀 조준',
+        '#38d9ff',
+        4.6
+      );
+      this.pushRadioLine(
+        '천사-01 · UH-60K 조종사',
+        '강습 항공대',
+        'gunship',
+        '#38d9ff',
+        'UH-60K 저공 진입! 측문 M134 미니건 안전장치 해제했다—아래 도로와 옥상 적 대공조 전부 쓸어버려!',
+        5.0,
+        true
+      );
+    } else if (stage === 'm3_ac130_flir') {
+      this.clearMissionEnemies();
+      this.heliRide.active = false;
+      this.heliGroup.visible = false;
+      this.ac130OrbitAngle = 0.68;
+      this.ac130TargetX = 0;
+      this.ac130TargetZ = 4;
+      this.ac130WeaponIdx = 1; // 40mm Bofors default (switchable 1=25mm, 2=40mm, 3=105mm)
+      this.ac130FireCd = 0;
+      this.ac130Zoomed = false;
+      this.ac130WaveIdx = 0;
+      this.ac130KilledCount = 0;
+      this.stageTotalHostiles = 14;
+      this.player.ads = false;
+      this.vatsActive = false;
+
+      this.setSquadmateState('sergeant', false, -2.2, 0, 22, Math.PI, 'active');
+      this.setSquadmateState('corporal', false, 2.4, 0, 23, Math.PI, 'active');
+      this.setSquadmateState('ghost9', false, 16, 0, 4.5);
+      this.setSquadmateState('survivor', false, 17, 0, 5.2);
+
+      // Wave 1 of 3 thermal ambush groups
+      this.spawnAc130HostileWave(1);
+      this.cinematic.showChapterCard(
+        `${prof.numberLabel} // AC-130 FLIR`,
+        'AC-130 열화상(FLIR) 화력 지원',
+        '상공 열화상(FLIR) 모드 · [1]25mm [2]40mm [3]105mm · [T] 흑백 반전',
+        prof.accentCss,
+        4.6
+      );
+      this.audio.playJetFlyby(0.72);
+      this.pushRadioLine(
+        '천사-01 · AC-130 건쉽',
+        '궤도 화력관제사',
+        'gunship',
+        '#e2e8f0',
+        '열화상(FLIR) 전환 완료. 시타델 진입로 적 기갑 증원파가 몰려온다—25mm·40mm·105mm 함포로 전부 초토화하라!',
+        5.2,
+        true
+      );
+    } else if (stage === 'm4_tank_assault') {
+      // V7.0 Playable ROK K2-X Black Panther Main Battle Tank Assault into OMNI-CORE Citadel!
+      this.clearMissionEnemies();
+      this.heliRide.active = false;
+      this.heliGroup.visible = false;
+      this.audio.setHeliPresence(0);
+      this.coreShieldDown = true;
+      this.coreHp = 480;
+      this.coreMaxHp = 480;
+      if (this.worldRefs) {
+        this.worldRefs.towerElevator.group.visible = false;
+        const cit = this.worldRefs.citadel;
+        cit.shieldDome.visible = false;
+        cit.coreWeakpoint.visible = true;
+        cit.coreWeakpoint.scale.setScalar(1.42);
+        (cit.coreWeakpoint.material as THREE.MeshBasicMaterial).color.setHex(0xff8c1a);
+        (cit.terminalGlow.material as THREE.MeshBasicMaterial).color.setHex(0x38e8ff);
+        cit.terminalLight.color.setHex(0xff8c1a);
+        cit.terminalLight.intensity = 7.8;
+      }
+
+      // Place player right behind the freshly deployed K2-X Black Panther Tank (within [F] board range!)
+      this.player.x = 0;
+      this.player.y = 1.7;
+      this.player.z = 19.8;
+      this.player.yaw = 0;
+      this.player.pitch = -0.05;
+      this.player.ammo[this.player.wpnIdx] = this.getEffectiveMag(this.player.wpnIdx);
+      this.setSquadmateState('sergeant', false, 0, 0, -20);
+      this.setSquadmateState('corporal', false, 0, 0, -20);
+      this.setSquadmateState('ghost9', false, 16, 0, 4.5);
+      this.setSquadmateState('survivor', false, 17, 0, 5.2);
+
+      // Deploy full-armor drivable K2-X Black Panther Tank right on Neo-Seoul Main Avenue!
+      this.deployTankAt(0, 14.2, 0);
+
+      // Armored Fortress Defense + OMNI-TITAN Overlord (1,350 HP Boss!) awaiting 120mm tank combat!
+      const boss = this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_TITAN, 0, -25.5);
+      boss.hp = 1350;
+      boss.maxHp = 1350;
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, -6.8, -4.5);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, 6.8, -4.5);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, -8.2, -16.0);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 8.2, -16.0);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, -4.5, -21.0);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, 4.5, -21.0);
+      this.stageTotalHostiles = 7;
+
+      this.audio.playShieldBreachDrop();
+      this.cinematic.showChapterCard(
+        `${prof.numberLabel} // ${prof.code}`,
+        prof.title,
+        '전방 K2-X 흑표 전차 배치 완료 · [F] 탑승 · [WASD] 주행 · [LMB] 120mm 주포',
+        prof.accentCss,
+        5.0
+      );
+      this.pushRadioLine(
+        '발키리-01 · 강서연 대위',
+        '궤도 작전 지휘',
+        'valkyrie',
+        '#ff6242',
+        '전방에 K2-X 흑표 주력전차 투하 완료! [F]로 탑승해서 120mm 주포로 시타델 방어선과 OMNI-TITAN을 분쇄하라!',
+        5.6,
+        true
+      );
+    } else if (stage === 'm4_elevator_breach') {
+      this.clearMissionEnemies();
+      this.player.x = 0;
+      this.player.y = 1.85;
+      this.player.z = -19.2;
+      this.player.yaw = 0;
+      this.player.pitch = 0.04;
+      this.player.vx = this.player.vy = this.player.vz = 0;
+      this.player.ammo[this.player.wpnIdx] = WEAPONS[this.player.wpnIdx].mag;
+      if (this.worldRefs) {
+        const el = this.worldRefs.towerElevator;
+        el.group.visible = true;
+        el.group.position.set(0, 0, -19.5);
+        el.leftDoor.position.set(-1.08, 1.6, -1.92);
+        el.rightDoor.position.set(1.08, 1.6, -1.92);
+      }
+      this.setSquadmateState('sergeant', true, -1.15, 0.25, -20.2, Math.PI, 'active');
+      this.setSquadmateState('corporal', true, 1.25, 0.25, -20.0, Math.PI, 'active');
+      this.cinematic.showChapterCard(
+        `${prof.numberLabel} // ${prof.code}`,
+        prof.title,
+        prof.location,
+        prof.accentCss,
+        4.8
+      );
+      this.pushRadioLine(
+        '소재우 중사',
+        '알파 분대장',
+        'squad',
+        '#ff6242',
+        '외벽 강습 엘리베이터 가동! 최상층 방폭문 열리자마자 화력 전부 쏟아부어!',
+        4.6,
+        true
+      );
+    } else if (stage === 'm4_tower_assault') {
+      this.clearMissionEnemies();
+      this.coreShieldDown = true;
+      this.coreHp = 420;
+      this.coreMaxHp = 420;
+      if (this.worldRefs) {
+        this.worldRefs.towerElevator.group.visible = false;
+        const cit = this.worldRefs.citadel;
+        cit.shieldDome.visible = false;
+        cit.coreWeakpoint.visible = true;
+        cit.coreWeakpoint.scale.setScalar(1.42);
+        (cit.coreWeakpoint.material as THREE.MeshBasicMaterial).color.setHex(0xff8c1a);
+        (cit.terminalGlow.material as THREE.MeshBasicMaterial).color.setHex(0x38e8ff);
+        cit.terminalLight.color.setHex(0xff8c1a);
+        cit.terminalLight.intensity = 7.8;
+      }
+      this.player.x = 0;
+      this.player.y = 1.7;
+      this.player.z = -17.5;
+      this.player.yaw = 0;
+      this.player.pitch = 0;
+      this.setSquadmateState('sergeant', true, -3.5, 0, -19.0, Math.PI, 'active');
+      this.setSquadmateState('corporal', true, 3.6, 0, -19.2, Math.PI, 'active');
+
+      // Final Citadel Assault: OMNI-TITAN Overlord (1350 HP Boss w/ 2 Phases + Destructible Armor Plates) + 4 elite sentinels!
+      const boss = this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_TITAN, 0, -28.5);
+      boss.hp = 1350;
+      boss.maxHp = 1350;
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, -7.5, -26.0);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 7.5, -26.0);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, -5.0, -23.0);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, 5.0, -23.0);
+      this.stageTotalHostiles = 5;
+      this.audio.playShieldBreachDrop();
+      this.pushRadioLine(
+        '박현준 하사',
+        '알파 분대',
+        'squad',
+        '#ff4422',
+        '전방 OMNI-TITAN 오버로드 확인! 저 괴물만 쓰러뜨리면 코어에 닿는다!',
+        4.8,
+        true
+      );
+    } else if (stage === 'm4_sacrifice_crisis') {
+      // Dramatic Squadmate Sacrifice Crisis!
+      this.crisisTimer = 12.0;
+      this.setSquadmateState('sergeant', true, -3.8, 0, -23.2, 0.4, 'wounded');
+      this.vfx.spawnExplosion(new THREE.Vector3(-3.8, 1.2, -23.2), 7.5, false);
+      this.audio.playExplosion(0.95, true, false);
+      this.shake = 0.85;
+      this.campaignPrompt = {
+        id: 'm4_squad_sacrifice',
+        title: '긴급 위기 // 소재우 중사 잔해 매몰',
+        subtitle: '시타델 붕괴 파편에 깔린 소재우 중사를 구출할 것인가, 코어로 단독 돌진할 것인가?',
+        optionFLabel: '[F] 소재우 중사 구출 (방폭 파편 제거)',
+        optionGLabel: '[G] 코어로 단독 돌진 (즉각 임무 완수)',
+        remainingSec: 12,
+      };
+      this.pushRadioLine(
+        '박현준 하사',
+        '알파 분대 · 긴급',
+        'squad',
+        '#ff4422',
+        '중사님이 붕괴 철골에 깔렸어! 어떡할 거야—구하러 갈 건가, 코어로 밀고 들어갈 건가?!',
+        5.5,
+        true
+      );
+    } else if (stage === 'm4_final_core') {
+      this.campaignPrompt = null;
+      this.coreShieldDown = true;
+      this.pushRadioLine(
+        '발키리-01 · 강서연 대위',
+        'UNS 아크라이트',
+        'valkyrie',
+        '#38d9ff',
+        '중앙 코어 단말기가 열렸어! [F]로 접속해서 지금 이 전쟁을 끝내!',
+        5.0,
+        true
+      );
+    }
+
+    this.emitHudSnapshot(true);
+  }
+
+  private spawnAc130HostileWave(waveNum: 1 | 2 | 3): void {
+    this.ac130WaveIdx = waveNum;
+    if (waveNum === 1) {
+      this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, -7.5, 4.5);
+      this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, 7.2, 3.8);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, -3.5, -2.5);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, 4.2, -3.0);
+    } else if (waveNum === 2) {
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, -8.5, -6.5);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, 8.2, -7.2);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 0, -10.5);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, -5.2, -11.5);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, 5.6, -12.0);
+      this.pushRadioLine(
+        '소재우 중사',
+        '지상 알파 분대',
+        'squad',
+        '#2ee6a6',
+        '천사-01, 적 기갑 증원 북쪽 도로로 밀려온다! 105밀리로 쓸어버려!',
+        4.2,
+        true
+      );
+    } else {
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, -9.5, -14.5);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 9.5, -14.5);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, -4.0, -18.5);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, 4.0, -18.5);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, 0, -21.0);
+      this.pushRadioLine(
+        '천사-01 · AC-130 건쉽',
+        '궤도 화력관제사',
+        'gunship',
+        '#fbbf24',
+        '타워 입구 마지막 적 방어선 포착! 전탄 화력 지원 개시!',
+        4.2,
+        true
+      );
+    }
+  }
+
+  public resolveCampaignPromptChoice(option: 'F' | 'G'): void {
+    if (this.gameMode !== 'campaign' || !this.campaignPrompt) return;
+
+    if (this.campaignPrompt.id === 'm2_ghost_survivor') {
+      this.campaignPrompt = null;
+      if (option === 'F') {
+        this.campaignChoices.survivorRescued = true;
+        this.campaignChoices.ghostTrust += 2;
+        this.pushCombatMedal('ALLIANCE FORGED', '생존자 구출 · 고스트-9 신뢰 구축', '#2dd4bf', true);
+        this.pushRadioLine(
+          '고스트-9',
+          '동맹 신스',
+          'ghost9',
+          '#2dd4bf',
+          '현명한 판단이다. 생존자 후송 경로는 내가 확보했다. 이제 상공 AC-130 링크를 열어주지.',
+          4.8,
+          true
+        );
+      } else {
+        this.campaignChoices.survivorRescued = false;
+        this.campaignChoices.ghostTrust -= 1;
+        this.pushRadioLine(
+          '고스트-9',
+          '탈영 신스',
+          'ghost9',
+          '#f5b342',
+          '결국 너희 인간도 똑같군... 암호 키는 가져가라. 대신 코어 앞에서 후회하게 될 거다.',
+          4.8,
+          true
+        );
+      }
+      this.triggerCheckpoint('체크포인트 도달');
+      this.stageTransitionDelay = 2.1;
+      this.stagePendingNext = { mission: 3, stage: 'm3_heli_insert' };
+      this.emitHudSnapshot(true);
+      return;
+    }
+
+    if (this.campaignPrompt.id === 'm4_squad_sacrifice') {
+      this.campaignPrompt = null;
+      this.crisisTimer = 0;
+      if (option === 'F') {
+        this.campaignChoices.squadmateSaved = true;
+        this.rescueAnimTimer = 1.9;
+        this.player.x = -3.0;
+        this.player.z = -22.2;
+        this.player.yaw = 0.72;
+        this.player.pitch = -0.35;
+        this.audio.playMountClick(true);
+        this.pushCombatMedal('NO ONE LEFT BEHIND', '소재우 중사 구출 완료', '#2ee6a6', true);
+        this.pushRadioLine(
+          '소재우 중사',
+          '알파 분대장',
+          'squad',
+          '#2ee6a6',
+          '고맙다, 이안... 끝까지 함께 간다! 지금 중앙 코어 단말기로 밀고 들어가!',
+          4.8,
+          true
+        );
+      } else {
+        this.campaignChoices.squadmateSaved = false;
+        this.pushRadioLine(
+          '소재우 중사',
+          '알파 분대장',
+          'squad',
+          '#ff6242',
+          '크윽... 알았다... 뒤돌아보지 말고 중앙 코어만 끝내...!',
+          4.5,
+          true
+        );
+        this.beginCampaignStage(4, 'm4_final_core');
+      }
+      this.emitHudSnapshot(true);
+    }
+  }
+
+  private fireAc130Cannon(): void {
+    if (!this.isAc130Active() || this.ac130FireCd > 0) return;
+    const spec = AC130_WEAPONS[this.ac130WeaponIdx];
+    this.ac130FireCd = spec.cooldown;
+    this.shake = Math.max(this.shake, spec.shake);
+    this.audio.playAc130Cannon(spec.reticleKind);
+
+    const startPos = this.camera.position.clone().add(new THREE.Vector3(0, -1.6, 0));
+    const spread = spec.reticleKind === '25mm' ? 1.55 : spec.reticleKind === '40mm' ? 0.85 : 0.4;
+    const tgt = new THREE.Vector3(
+      this.ac130TargetX + (Math.random() - 0.5) * spread,
+      0.35,
+      this.ac130TargetZ + (Math.random() - 0.5) * spread
+    );
+
+    const sz = spec.reticleKind === '105mm' ? 0.42 : spec.reticleKind === '40mm' ? 0.28 : 0.16;
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(sz, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0xffffff })
+    );
+    mesh.position.copy(startPos);
+    this.scene.add(mesh);
+
+    this.ac130Shells.push({
+      pos: startPos,
+      target: tgt,
+      timeLeft: spec.flightSec,
+      maxTime: spec.flightSec,
+      radius: spec.blastRadius,
+      dmg: spec.damage,
+      caliber: spec.reticleKind,
+      mesh,
+    });
+  }
+
+  private updateAc130Gunship(dt: number, realDt: number): void {
+    // Smooth high-altitude gunship circular orbit above Neo-Seoul Sector Zero
+    this.ac130OrbitAngle += realDt * 0.135;
+    const orbitR = 46;
+    const camX = Math.cos(this.ac130OrbitAngle) * orbitR;
+    const camZ = Math.sin(this.ac130OrbitAngle) * orbitR;
+    const camY = 43.5 + Math.sin(this.ac130OrbitAngle * 2.1) * 1.2;
+
+    // Keyboard WASD pan fallback on ground plane relative to camera right/forward
+    const panFwd =
+      (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) -
+      (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0);
+    const panRight =
+      (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0) -
+      (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0);
+    if (panFwd !== 0 || panRight !== 0) {
+      const toCenter = this._v1.set(this.ac130TargetX - camX, 0, this.ac130TargetZ - camZ).normalize();
+      const rightV = this._v2.set(-toCenter.z, 0, toCenter.x);
+      const panSpd = this.ac130Zoomed ? 16 : 28;
+      this.ac130TargetX = Math.max(
+        -44,
+        Math.min(44, this.ac130TargetX + (toCenter.x * panFwd + rightV.x * panRight) * panSpd * realDt)
+      );
+      this.ac130TargetZ = Math.max(
+        -44,
+        Math.min(44, this.ac130TargetZ + (toCenter.z * panFwd + rightV.z * panRight) * panSpd * realDt)
+      );
+    }
+
+    this.ac130Zoomed = this.mouseRight;
+    this.ac130FireCd = Math.max(0, this.ac130FireCd - realDt);
+    if (this.mouseLeft && this.ac130FireCd <= 0) {
+      this.fireAc130Cannon();
+    }
+
+    this.shake *= Math.pow(0.001, realDt);
+    const shkX = (Math.random() - 0.5) * this.shake * 0.65;
+    const shkY = (Math.random() - 0.5) * this.shake * 0.65;
+
+    this.camera.position.set(camX + shkX, camY + shkY, camZ);
+    this.camera.lookAt(this.ac130TargetX, 1.0, this.ac130TargetZ);
+    const targetFov = this.ac130Zoomed ? 21 : 44;
+    this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, realDt * 12);
+    this.camera.updateProjectionMatrix();
+
+    this.viewmodel.pivot.visible = false;
+    this.laserBeam.visible = false;
+    this.laserDot.visible = false;
+
+    // Make all alive hostiles glow white-hot in FLIR thermal view!
+    for (const u of this.units) {
+      if (!u.alive) continue;
+      for (const m of u.rig.mats) {
+        m.emissive.setHex(0xe5e5e5);
+      }
+    }
+
+    // Update descending 25mm / 40mm / 105mm gunship projectiles
+    for (let i = this.ac130Shells.length - 1; i >= 0; i--) {
+      const sh = this.ac130Shells[i];
+      sh.timeLeft -= dt;
+      const p = 1 - Math.max(0, sh.timeLeft) / Math.max(0.01, sh.maxTime);
+      sh.mesh.position.lerpVectors(sh.pos, sh.target, p);
+      if (sh.timeLeft <= 0) {
+        this.scene.remove(sh.mesh);
+        sh.mesh.geometry.dispose();
+        (sh.mesh.material as THREE.Material).dispose();
+        this.ac130Shells.splice(i, 1);
+
+        // Friendly fire warning if shell lands close to friendly IR strobes (squad is safe)
+        const sgt = this.squadmates.find((s) => s.id === 'sergeant' && s.active);
+        if (sgt && Math.hypot(sgt.x - sh.target.x, sgt.z - sh.target.z) < 7.5) {
+          this.pushRadioLine(
+            '소재우 중사',
+            '지상 알파 분대',
+            'squad',
+            '#ff6242',
+            '위험근접! 아군 IR 스트로브 확인해, 너무 가까워!',
+            3.2,
+            false
+          );
+        }
+
+        this.triggerExplosion(
+          sh.target,
+          sh.radius,
+          sh.dmg,
+          Faction.PLAYER,
+          `AC-130 ${sh.caliber.toUpperCase()}`,
+          {
+            isArtillery: sh.caliber === '105mm',
+            tag: `AC-130 ${sh.caliber.toUpperCase()} 직격`,
+          }
+        );
+      }
+    }
+  }
+
+  private updateSquadmates(dt: number): void {
+    const nowSec = performance.now() * 0.001;
+    const strobeOn = Math.sin(nowSec * 9.5) > 0.15;
+    if (this.squadOrderTimer > 0) {
+      this.squadOrderTimer = Math.max(0, this.squadOrderTimer - dt);
+      if (this.squadOrderTimer <= 0) this.squadOrder = 'follow';
+    }
+
+    for (const sq of this.squadmates) {
+      if (!sq.active) continue;
+      sq.rig.irStrobe.visible = this.isAc130Active() ? strobeOn : true;
+      sq.rig.irStrobe.scale.setScalar(this.isAc130Active() ? 2.6 : 1.0);
+
+      if (sq.status === 'wounded' || sq.id === 'ghost9' || sq.id === 'survivor') {
+        sq.rig.root.position.set(sq.x, sq.y, sq.z);
+        sq.rig.root.rotation.y = sq.yaw;
+        continue;
+      }
+
+      // During 1st-person setpieces (LCAC landing / Tower elevator), squadmates stay anchored inside vehicle
+      if (this.missionStage === 'm1_landing' || this.missionStage === 'm4_elevator_breach') {
+        sq.rig.root.position.set(sq.x, sq.y, sq.z);
+        sq.rig.root.rotation.y = sq.yaw;
+        continue;
+      }
+
+      // Active combat movement obeying [Z] Regroup / [U] Focus Suppress orders!
+      const sideSign = sq.id === 'sergeant' ? -1 : 1;
+      let goalX = this.player.x + sideSign * (this.squadOrder === 'regroup' ? 1.85 : 3.4);
+      let goalZ =
+        this.player.z +
+        (this.squadOrder === 'regroup' ? 1.2 : this.squadOrder === 'suppress' ? -4.2 : 2.2);
+      if (this.isAc130Active()) {
+        goalX = sideSign * 3.2;
+        goalZ = Math.max(-12, 22 - this.stageTimer * 0.72);
+      } else if (this.missionStage === 'm2_breach_slowmo') {
+        goalX = 11.5;
+        goalZ = sq.id === 'sergeant' ? 2.7 : 6.4;
+      }
+
+      const dx = goalX - sq.x;
+      const dz = goalZ - sq.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > 1.2) {
+        const spd = this.isAc130Active() ? 2.8 : 6.2;
+        sq.x += (dx / dist) * Math.min(dist, spd * dt);
+        sq.z += (dz / dist) * Math.min(dist, spd * dt);
+        resolveXZCollision(sq, 0.48, this.colliders, ARENA_HALF_SIZE, sq.y);
+        sq.walkPhase += dt * spd * 1.9;
+        const stride = Math.sin(sq.walkPhase);
+        sq.rig.leftLeg.rotation.x = stride * 0.55;
+        sq.rig.rightLeg.rotation.x = -stride * 0.55;
+      } else {
+        sq.rig.leftLeg.rotation.x *= 0.85;
+        sq.rig.rightLeg.rotation.x *= 0.85;
+      }
+
+      const floorY = this.getFloorHeightAt(sq.x, sq.z, sq.y);
+      sq.y += (floorY - sq.y) * Math.min(1, dt * 10);
+      sq.rig.root.position.set(sq.x, sq.y, sq.z);
+
+      // Squadmate suppressive fire on nearest genuinely visible enemy (real LOS check, balanced non-solo-clearing DPS!)
+      const sqEye = new THREE.Vector3(sq.x, sq.y + 1.45, sq.z);
+      let nearest: ActiveUnit | null = null;
+      let bestD = 32;
+      for (const u of this.units) {
+        if (!u.alive) continue;
+        const d = Math.hypot(u.x - sq.x, u.z - sq.z);
+        if (d < bestD) {
+          const tgtCheck = new THREE.Vector3(u.x, u.y + 1.25 * u.scale, u.z);
+          if (this.hasLineOfSight3D(sqEye, tgtCheck)) {
+            bestD = d;
+            nearest = u;
+          }
+        }
+      }
+      if (nearest) {
+        const desiredYaw = Math.atan2(nearest.x - sq.x, nearest.z - sq.z);
+        sq.yaw = desiredYaw;
+        sq.fireCd -= dt;
+        if (sq.fireCd <= 0 && !this.isAc130Active()) {
+          const isSuppress = this.squadOrder === 'suppress';
+          sq.fireCd = (isSuppress ? 0.85 : 1.45) + Math.random() * 0.55;
+          const muzzle = new THREE.Vector3(sq.x, sq.y + 1.38, sq.z);
+          const tgt = new THREE.Vector3(nearest.x, nearest.y + 1.25 * nearest.scale, nearest.z);
+          this.spawnTracer(muzzle, tgt, 0x34d399, 0.1, 'bullet');
+          const dSqP = Math.hypot(sq.x - this.player.x, sq.z - this.player.z);
+          this.audio.playWeapon('rifle', Math.max(0.14, (1 - dSqP / 45) * 0.42), {
+            isIndoors: this.isIndoors && dSqP < 12,
+            distanceM: dSqP,
+          });
+          this.damageUnit(
+            nearest,
+            isSuppress ? 7 : 4,
+            'torso',
+            tgt,
+            tgt.clone().sub(muzzle).normalize(),
+            -2,
+            sq.name,
+            '분대 엄호 사격'
+          );
+        }
+      } else if (dist > 0.5) {
+        sq.yaw = Math.atan2(dx, dz);
+      }
+      sq.rig.root.rotation.y = sq.yaw;
+    }
+  }
+
+  private updateCampaignDirector(dt: number, realDt: number): void {
+    if (this.gameMode !== 'campaign' || this.phase !== 'playing' || this.cinematic.isCutsceneActive()) {
+      return;
+    }
+
+    this.stageTimer += realDt;
+
+    // Pending smooth mission transition after Checkpoint Toast
+    if (this.stagePendingNext) {
+      this.stageTransitionDelay -= realDt;
+      if (this.stageTransitionDelay <= 0) {
+        const next = this.stagePendingNext;
+        this.stagePendingNext = null;
+        this.beginCampaignStage(next.mission, next.stage);
+      }
+      return;
+    }
+
+    // 1st-Person Sergeant So rescue pull-up animation (Mission 04)
+    if (this.rescueAnimTimer > 0) {
+      this.rescueAnimTimer = Math.max(0, this.rescueAnimTimer - realDt);
+      const p = 1 - this.rescueAnimTimer / 1.9;
+      const heave = Math.sin(p * Math.PI) * 0.32;
+      this.camera.position.set(this.player.x, 1.32 + p * 0.38 - heave * 0.2, this.player.z);
+      this.camera.rotation.y = this.player.yaw;
+      this.camera.rotation.x = -0.35 * (1 - p);
+      this.camera.rotation.z = Math.sin(p * Math.PI * 2) * 0.12;
+      const sgt = this.squadmates.find((s) => s.id === 'sergeant');
+      if (sgt) {
+        sgt.rig.torso.rotation.x = 0.95 * (1 - p);
+        if (this.rescueAnimTimer <= 0) {
+          sgt.status = 'active';
+        }
+      }
+      if (this.rescueAnimTimer <= 0) {
+        this.triggerCheckpoint('체크포인트 도달');
+        this.beginCampaignStage(4, 'm4_final_core');
+      }
+      return;
+    }
+
+    // MISSION 01 — 1ST-PERSON UNCUT LCAC HOVERCRAFT LANDING SETPIECE (Image 3 Homage!)
+    if (this.missionStage === 'm1_landing') {
+      const t = this.stageTimer;
+      const lcac = this.worldRefs.lcacHovercraft;
+      const glideT = Math.min(1, t / 5.8);
+      const easeGlide = 1 - Math.pow(1 - glideT, 2.2);
+      const hoverZ = 53.5 - easeGlide * 12.0; // Glides 53.5 -> 41.5
+      const swellY = Math.sin(t * 4.2) * 0.14 * (1 - glideT * 0.75);
+      const swellRoll = Math.cos(t * 3.1) * 0.032 * (1 - glideT * 0.75);
+      lcac.group.position.set(0, swellY, hoverZ);
+      lcac.group.rotation.z = swellRoll;
+
+      // Solo Tier-1 Operator riding LCAC bow deck (zero follower AI bots)
+      this.setSquadmateState('sergeant', false, -1.85, 1.2 + swellY, hoverZ - 2.2, Math.PI, 'active');
+      this.setSquadmateState('corporal', false, 1.85, 1.2 + swellY, hoverZ - 1.9, Math.PI, 'active');
+
+      // Scripted milestones
+      if (t >= 0.3 && !this.stageMilestones.has('m1_line1')) {
+        this.stageMilestones.add('m1_line1');
+        this.pushRadioLine('발키리-01 · 강서연 대위', '궤도 작전 지휘', 'valkyrie', '#2ee6a6', 'LCAC-655 해안 접안 10초 전. 충격에 대비하라.', 2.2, true);
+      }
+      if (t >= 1.8 && !this.stageMilestones.has('m1_line2')) {
+        this.stageMilestones.add('m1_line2');
+        this.pushRadioLine('천사-01 · 상륙정 정장', '대한민국해군 LCAC-655', 'gunship', '#38d9ff', '전방 적 해안포 사격 개시! 전원 엎드려!', 1.8, true);
+      }
+      if (t >= 2.9 && !this.stageMilestones.has('m1_apc_hit')) {
+        this.stageMilestones.add('m1_apc_hit');
+        // Friendly K-808 ahead gets hit -> fireball + shock knockdown in 1st-person!
+        this.vfx.spawnExplosion(new THREE.Vector3(-4.5, 2.2, hoverZ - 14), 11, false);
+        this.audio.playExplosion(1.1, true, false);
+        this.shake = 1.25;
+        this.blastFlashSeq++;
+        this.pushRadioLine(
+          '발키리-01 · 강서연 대위',
+          '궤도 작전 지휘',
+          'valkyrie',
+          '#f5b342',
+          '전방 11시 장갑차 피격! 연막 속으로 침투해 단독 교두보를 확보하라!',
+          3.4,
+          true
+        );
+      }
+      if (t >= 4.7 && !this.stageMilestones.has('m1_standup')) {
+        this.stageMilestones.add('m1_standup');
+        this.audio.playMountClick(true);
+        this.pushRadioLine(
+          '천사-01 · 상륙정 정장',
+          '대한민국해군 LCAC-655',
+          'gunship',
+          '#2ee6a6',
+          '함수 램프 개방 3초 전! 무장 확인—전방 돌파 준비!',
+          2.6,
+          true
+        );
+      }
+      if (t >= 6.0 && !this.stageMilestones.has('m1_ramp')) {
+        this.stageMilestones.add('m1_ramp');
+        this.audio.playExplosion(0.65, false, false);
+        this.shake = 0.45;
+      }
+
+      // Ramp starts slightly cracked to frame the smoky Seoul shoreline ahead, then slams fully open at t=5.9..7.0!
+      const rampT = Math.max(0, Math.min(1, (t - 5.9) / 1.1));
+      lcac.rampPivot.rotation.x = -0.22 - (Math.PI * 0.44 - 0.22) * (rampT * rampT);
+
+      // 1st-person uncut knockdown (t=2.9..4.7) -> haul-up (t=4.7..6.1) camera cleanly ABOVE LCAC well-deck (zero hull clipping!)
+      let eyeY = 3.18 + swellY;
+      let camRoll = swellRoll;
+      if (t >= 2.9 && t < 4.7) {
+        const kd = Math.min(1, (t - 2.9) / 0.45);
+        eyeY = 3.18 - kd * 1.12 + swellY;
+        camRoll = -0.34 * kd;
+      } else if (t >= 4.7 && t < 6.2) {
+        const up = Math.min(1, (t - 4.7) / 1.35);
+        const eUp = 1 - Math.pow(1 - up, 2);
+        eyeY = 2.06 + eUp * 1.12 + Math.sin(up * Math.PI) * 0.14;
+        camRoll = -0.34 * (1 - eUp);
+      }
+
+      this.shake *= Math.pow(0.002, realDt);
+      const shkX = (Math.random() - 0.5) * this.shake * 0.24;
+      const shkY = (Math.random() - 0.5) * this.shake * 0.24;
+      this.camera.position.set(shkX, eyeY + shkY, hoverZ - 3.6);
+      this.camera.rotation.y = Math.max(-0.85, Math.min(0.85, this.player.yaw));
+      this.camera.rotation.x = Math.max(-0.55, Math.min(0.55, this.player.pitch));
+      this.camera.rotation.z = camRoll;
+      this.viewmodel.pivot.visible = t > 5.4;
+
+      if (t >= 7.3) {
+        this.triggerCheckpoint('체크포인트 도달');
+        this.beginCampaignStage(1, 'm1_beachhead');
+      }
+      return;
+    }
+
+    // MISSION 01 — BEACHHEAD CLEAR -> MISSION 02
+    if (this.missionStage === 'm1_beachhead') {
+      const alive = this.units.filter((u) => u.alive).length;
+      if (alive === 0) {
+        this.triggerCheckpoint('체크포인트 도달');
+        this.pushRadioLine(
+          '소재우 중사',
+          '알파 분대장',
+          'squad',
+          '#2ee6a6',
+          '해안 교두보 확보 완료! 을지로 도심 골목으로 전진한다—따라와!',
+          3.8,
+          true
+        );
+        this.stageTransitionDelay = 2.0;
+        this.stagePendingNext = { mission: 2, stage: 'm2_alley' };
+      }
+      return;
+    }
+
+    // MISSION 02 — ALLEY CLEAR -> BLINKING C4 BREACH DOOR PROMPT + CAPTAIN KANG SECRET INTEL
+    if (this.missionStage === 'm2_alley') {
+      const alive = this.units.filter((u) => u.alive).length;
+      if (alive <= 3 && alive > 0 && !this.stageMilestones.has('m2_valkyrie_secret')) {
+        this.stageMilestones.add('m2_valkyrie_secret');
+        this.pushRadioLine(
+          '발키리-01 · 강서연 대위',
+          'UNS 아크라이트 · 암호 회선',
+          'valkyrie',
+          '#38d9ff',
+          '이안, 조심해... 상부에서 궤도 소각 프로토콜을 준비 중이야. 네가 직접 코어를 멈춰야 서울이 산다.',
+          5.6,
+          false
+        );
+      }
+      const bd = this.worldRefs?.euljiroBreachDoor;
+      if (alive === 0 && bd && !bd.breached) {
+        bd.c4Pack.visible = true;
+        bd.breachLight.intensity = 2.2 + Math.sin(this.stageTimer * 10) * 1.4;
+        if (!this.stageMilestones.has('m2_alley_clear')) {
+          this.stageMilestones.add('m2_alley_clear');
+          this.triggerCheckpoint('체크포인트 도달');
+          this.pushRadioLine(
+            '소재우 중사',
+            '알파 분대장',
+            'squad',
+            '#38d9ff',
+            '골목 정리 완료! 동쪽 적 지휘소 방폭문에 붙어—[F]로 C4 폭파 브리칭한다!',
+            4.8,
+            true
+          );
+        }
+      }
+      return;
+    }
+
+    // MISSION 02 — 0.2x SLOW-MO BREACH & CLEAR DOOR FLY-IN ANIMATION
+    if (this.missionStage === 'm2_breach_slowmo') {
+      if (this.breachSlowmoTimer > 0) {
+        this.breachSlowmoTimer = Math.max(0, this.breachSlowmoTimer - realDt);
+      }
+      const bd = this.worldRefs?.euljiroBreachDoor;
+      if (bd) {
+        const fly = Math.min(1, this.stageTimer * 0.55);
+        bd.leftLeaf.position.set(fly * 3.8, Math.max(0.2, 1.44 - fly * 1.1), -0.76 - fly * 1.6);
+        bd.leftLeaf.rotation.set(fly * 1.2, fly * 0.9, -fly * 1.45);
+        bd.rightLeaf.position.set(fly * 4.2, Math.max(0.2, 1.44 - fly * 1.15), 0.76 + fly * 1.5);
+        bd.rightLeaf.rotation.set(-fly * 1.1, -fly * 0.85, -fly * 1.4);
+        bd.breachLight.intensity = Math.max(0, 6.5 * (1 - fly));
+      }
+      const alive = this.units.filter((u) => u.alive).length;
+      if (alive === 0) {
+        this.breachSlowmoTimer = 0;
+        this.beginCampaignStage(2, 'm2_survivor_ghost');
+      }
+      return;
+    }
+
+    // MISSION 03 — STAGE 1: UH-60K ASSAULT HELICOPTER DOOR-GUNNER RIDE
+    if (this.missionStage === 'm3_heli_insert') {
+      this.updateHeliRide(dt, realDt);
+      return;
+    }
+
+    // MISSION 03 — STAGE 2: AC-130 FLIR GUNSHIP WAVE PROGRESSION
+    if (this.missionStage === 'm3_ac130_flir') {
+      this.updateAc130Gunship(dt, realDt);
+      const alive = this.units.filter((u) => u.alive).length;
+      if (alive === 0) {
+        if (this.ac130WaveIdx < 3) {
+          const nextWave = (this.ac130WaveIdx + 1) as 2 | 3;
+          this.spawnAc130HostileWave(nextWave);
+          if (nextWave === 2 && !this.stageMilestones.has('m3_park_pact')) {
+            this.stageMilestones.add('m3_park_pact');
+            this.pushRadioLine(
+              '발키리-01 · 강서연 대위',
+              '궤도 작전 지휘',
+              'valkyrie',
+              '#38d9ff',
+              '시타델 진입로에 K2-X 흑표 전차 공중 투하 준비 중! 남은 적 기갑 증원파만 완전히 쓸어버려!',
+              4.6,
+              false
+            );
+          }
+        } else {
+          // Mission 03 Complete! Restore color grading & transition straight into K2-X Tank Assault (Mission 04)!
+          if (this.gradePass) this.gradePass.uniforms.uFlirMode.value = 0.0;
+          this.triggerCheckpoint('체크포인트 도달');
+          this.pushRadioLine(
+            '천사-01 · AC-130 건쉽',
+            '궤도 화력관제사',
+            'gunship',
+            '#2ee6a6',
+            '적 열원 전멸 확인! K2-X 흑표 전차 투하 완료—이제 시타델 정면으로 밀고 들어가라!',
+            4.2,
+            true
+          );
+          this.stageTransitionDelay = 2.0;
+          this.stagePendingNext = { mission: 4, stage: 'm4_tank_assault' };
+        }
+      }
+      return;
+    }
+
+    // MISSION 04 — STAGE 1: DRIVABLE K2-X BLACK PANTHER TANK ASSAULT & OMNI-TITAN DUEL
+    if (this.missionStage === 'm4_tank_assault') {
+      const alive = this.units.filter((u) => u.alive).length;
+      if (alive === 0) {
+        this.triggerCheckpoint('체크포인트 도달');
+        this.pushRadioLine(
+          '발키리-01 · 강서연 대위',
+          '궤도 작전 지휘',
+          'valkyrie',
+          '#2ee6a6',
+          'OMNI-TITAN 및 시타델 친위대 전멸 확인! 전차에서 하차해 북쪽 OMNI-CORE 중앙 단말기([F])에 접속하라!',
+          5.0,
+          true
+        );
+        this.beginCampaignStage(4, 'm4_final_core');
+      }
+      return;
+    }
+
+    // MISSION 04 — 1ST-PERSON UNCUT EXTERIOR LIFT CLIMB & JOINT BLAST-DOOR PRY-OPEN
+    if (this.missionStage === 'm4_elevator_breach') {
+      const t = this.stageTimer;
+      const el = this.worldRefs.towerElevator;
+      // Lift shudders upward then docks flush with Citadel Courtyard
+      const liftY = t < 3.4 ? Math.sin((t / 3.4) * Math.PI) * 3.4 : 0;
+      const jitterX = (Math.random() - 0.5) * 0.035;
+      const jitterY = (Math.random() - 0.5) * 0.035;
+      el.group.position.set(0, liftY, -19.5);
+      el.cabinLight.intensity = 2.2 + Math.sin(t * 16) * 0.8;
+
+      this.setSquadmateState('sergeant', true, -1.15, liftY + 0.22, -20.6, Math.PI, 'active');
+      this.setSquadmateState('corporal', true, 1.25, liftY + 0.22, -20.2, Math.PI, 'active');
+
+      if (t >= 2.2 && !this.stageMilestones.has('m4_flak')) {
+        this.stageMilestones.add('m4_flak');
+        this.vfx.spawnExplosion(new THREE.Vector3(6.5, liftY + 3.2, -25.0), 8, false);
+        this.audio.playExplosion(0.85, false, false);
+        this.shake = 0.72;
+      }
+      if (t >= 3.5 && !this.stageMilestones.has('m4_pry')) {
+        this.stageMilestones.add('m4_pry');
+        this.audio.playMountClick(true);
+        this.pushRadioLine(
+          '소재우 중사',
+          '알파 분대장',
+          'squad',
+          '#ff6242',
+          '방폭문 유압이 잠겼다—같이 밀어! 하나, 둘, 셋!',
+          2.6,
+          true
+        );
+      }
+
+      // Joint 1st-person door heave strain (t = 3.6 -> 5.8)
+      let heavePitch = 0;
+      let heaveRoll = 0;
+      if (t >= 3.6) {
+        const openP = Math.min(1, (t - 3.6) / 2.1);
+        const eased = openP * openP * (3 - 2 * openP);
+        el.leftDoor.position.x = -1.08 - eased * 1.95;
+        el.rightDoor.position.x = 1.08 + eased * 1.95;
+        heavePitch = Math.sin(openP * Math.PI * 3) * 0.05;
+        heaveRoll = Math.sin(openP * Math.PI * 2) * 0.08;
+        if (Math.random() < 0.28) {
+          this.vfx.spawnSparkBurst(new THREE.Vector3(0, 1.6, -21.4), new THREE.Vector3(0, 0, 1), 3, 0xffaa33, 5);
+        }
+      }
+
+      this.shake *= Math.pow(0.002, realDt);
+      this.camera.position.set(jitterX, liftY + 1.85 + jitterY, -19.2 - Math.max(0, (t - 3.6) * 0.35));
+      this.camera.rotation.y = Math.max(-0.7, Math.min(0.7, this.player.yaw));
+      this.camera.rotation.x = Math.max(-0.5, Math.min(0.5, this.player.pitch + heavePitch));
+      this.camera.rotation.z = heaveRoll;
+      this.viewmodel.pivot.visible = t > 4.8;
+
+      if (t >= 6.1) {
+        this.triggerCheckpoint('체크포인트 도달');
+        this.beginCampaignStage(4, 'm4_tower_assault');
+      }
+      return;
+    }
+
+    // MISSION 04 — CITADEL FINAL ASSAULT -> SQUADMATE SACRIFICE CRISIS
+    if (this.missionStage === 'm4_tower_assault') {
+      const alive = this.units.filter((u) => u.alive).length;
+      if (alive === 0) {
+        this.beginCampaignStage(4, 'm4_sacrifice_crisis');
+      }
+      return;
+    }
+
+    // MISSION 04 — 12s CRISIS COUNTDOWN (auto-resolves to cold rush if timer runs out)
+    if (this.missionStage === 'm4_sacrifice_crisis') {
+      if (this.crisisTimer < 7.5 && !this.stageMilestones.has('m4_architect_taunt')) {
+        this.stageMilestones.add('m4_architect_taunt');
+        this.pushRadioLine(
+          'OMNI-CORE · 아키텍트',
+          '중앙 신경망',
+          'arcadia',
+          '#ff4422',
+          '네 분대원을 구하려다 인류 전체를 불태울 셈인가, 이안? 논리적으로 무의미한 희생이다.',
+          5.2,
+          false
+        );
+      }
+      this.crisisTimer = Math.max(0, this.crisisTimer - realDt);
+      if (this.campaignPrompt) {
+        this.campaignPrompt.remainingSec = Math.ceil(this.crisisTimer);
+      }
+      if (Math.random() < 0.16) {
+        this.vfx.spawnSparkBurst(new THREE.Vector3(-3.8, 0.9, -23.2), new THREE.Vector3(0, 1, 0), 3, 0xff5a14, 5);
+      }
+      if (this.crisisTimer <= 0) {
+        this.resolveCampaignPromptChoice('G');
+      }
+    }
+  }
+
+  private buildAc130HudState(): Ac130HudState {
+    const active = this.isAc130Active();
+    const spec = AC130_WEAPONS[this.ac130WeaponIdx];
+    const reloadPct =
+      this.ac130FireCd <= 0
+        ? 100
+        : Math.max(0, Math.min(100, Math.round((1 - this.ac130FireCd / spec.cooldown) * 100)));
+    const w = this.container.clientWidth || window.innerWidth;
+    const h = this.container.clientHeight || window.innerHeight;
+    const friendlyStrobes: Ac130HudState['friendlyStrobes'] = [];
+    const hostileMarkers: Ac130HudState['hostileMarkers'] = [];
+
+    if (active) {
+      for (const sq of this.squadmates) {
+        if (!sq.active) continue;
+        this._v4.set(sq.x, sq.y + 1.9, sq.z).project(this.camera);
+        if (this._v4.z < -1 || this._v4.z > 1) continue;
+        friendlyStrobes.push({
+          id: sq.id,
+          label: sq.name,
+          screenX: Math.round(((this._v4.x + 1) * 0.5) * w),
+          screenY: Math.round(((-this._v4.y + 1) * 0.5) * h),
+        });
+      }
+      for (const u of this.units) {
+        if (!u.alive) continue;
+        this._v4.set(u.x, u.y + 1.3 * u.scale, u.z).project(this.camera);
+        if (this._v4.z < -1 || this._v4.z > 1) continue;
+        hostileMarkers.push({
+          id: u.id,
+          screenX: Math.round(((this._v4.x + 1) * 0.5) * w),
+          screenY: Math.round(((-this._v4.y + 1) * 0.5) * h),
+          isHeavy: u.isBoss || u.archetype === UnitArchetype.SYNDICATE_HEAVY,
+        });
+      }
+    }
+
+    return {
+      active,
+      weaponIdx: this.ac130WeaponIdx,
+      caliber: spec.caliber,
+      weaponName: spec.name,
+      reloadPct,
+      thermalMode: this.ac130ThermalMode,
+      zoomed: this.ac130Zoomed,
+      altitudeM: 4200,
+      headingDeg: Math.round((((this.ac130OrbitAngle * 180) / Math.PI) % 360 + 360) % 360),
+      friendlyStrobes,
+      hostileMarkers,
+    };
+  }
+
+  private projectSquadmateTags(): SquadmateTag[] {
+    if (
+      this.gameMode !== 'campaign' ||
+      this.phase !== 'playing' ||
+      this.isAc130Active() ||
+      this.cinematic.isCutsceneActive()
+    ) {
+      return [];
+    }
+    const w = this.container.clientWidth || window.innerWidth;
+    const h = this.container.clientHeight || window.innerHeight;
+    const tags: SquadmateTag[] = [];
+    for (const sq of this.squadmates) {
+      if (!sq.active) continue;
+      const dist = Math.hypot(sq.x - this.player.x, sq.z - this.player.z);
+      if (dist > 45) continue;
+      this._v4.set(sq.x, sq.y + 2.18, sq.z).project(this.camera);
+      if (this._v4.z < -1 || this._v4.z > 1) continue;
+      const sx = ((this._v4.x + 1) * 0.5) * w;
+      const sy = ((-this._v4.y + 1) * 0.5) * h;
+      if (sx < 24 || sx > w - 24 || sy < 40 || sy > h - 60) continue;
+      tags.push({
+        id: sq.id,
+        name: sq.name,
+        screenX: Math.round(sx),
+        screenY: Math.round(sy),
+        distanceM: Math.round(dist),
+        status: sq.status,
+      });
+    }
+    return tags;
+  }
+
+  private tryInteractKey(): void {
+    if (this.phase !== 'playing' || !this.player.alive || this.cinematic.isCutsceneActive()) return;
+
+    // 0) Active Campaign Choice Prompt ([F] rescue survivor / Ghost-9 pact OR save Sergeant So!)
+    if (this.gameMode === 'campaign' && this.campaignPrompt) {
+      this.resolveCampaignPromptChoice('F');
+      return;
+    }
+
+    // 0.25) Board or Dismount Drivable K2-X Black Panther Main Battle Tank ([F])!
+    if (this.tank.driving) {
+      this.exitTank(false);
+      return;
+    }
+    if (this.isTankNearPlayer()) {
+      this.enterTank();
+      return;
+    }
+
+    // 0.5) Mission 02 Euljiro C4 Blast Door Breach!
+    if (this.isBreachDoorInRange()) {
+      this.beginCampaignStage(2, 'm2_breach_slowmo');
+      return;
+    }
+
+    // 1) Hack nearby Ghost-9 automated defense turret
+    if (this.worldRefs) {
+      for (const t of this.worldRefs.turrets) {
+        if (t.hacked) continue;
+        if (Math.hypot(this.player.x - t.x, this.player.z - t.z) <= 5.2) {
+          t.hacked = true;
+          this.campaignChoices.ghostTrust += 1;
+          this.pushCombatMedal('BACKDOOR HACK', '고스트-9 자동 포탑 장악', '#2ee6a6', true);
+          t.rig.statusMat.color.setHex(0x2dd4bf);
+          (t.rig.beaconRing.material as THREE.MeshBasicMaterial).color.setHex(0x2dd4bf);
+          this.audio.playTurretHack();
+          this.vfx.spawnSparkBurst(new THREE.Vector3(t.x, 1.8, t.z), new THREE.Vector3(0, 1, 0), 16, 0x2dd4bf, 8);
+          this.addThreatPoints(35);
+          this.triggerRadioComms('turretHacked', false);
+          this.showCallout(`${t.name} 해킹 완료 · 아군 화력 지원 개시!`, '#2dd4bf', 2.4);
+          this.emitHudSnapshot(true);
+          return;
+        }
+      }
+    }
+
+    // 2) Trigger Zero Hour Climax / Auto-Branching Ending at OMNI-CORE Central Server Terminal
+    this.tryShutdownServerCore();
   }
 
   private tryShutdownServerCore(): void {
@@ -2592,24 +5969,124 @@ export class IronAshEngine {
     const dist = Math.hypot(this.player.x - cit.terminalX, this.player.z - cit.terminalZ);
     if (dist > 10.5) return;
     this.coreHp = 0;
-    this.triggerDawnEnding();
+    this.triggerZeroHourChoice();
   }
 
-  private triggerDawnEnding(): void {
-    if (this.serverShutdownActive) return;
-    this.serverShutdownActive = true;
+  private triggerZeroHourChoice(): void {
+    if (this.serverShutdownActive || this.cinematic.getSequence() === 'choice') return;
     this.vatsActive = false;
     this.clearHeldInputs();
 
+    // In 4-Mission Linear Campaign (Mission 04 final core), choices accumulated across Missions 2–4
+    // AUTOMATICALLY branch into the earned dense ending (Symbiosis / Dawn / Ascension)!
+    if (this.gameMode === 'campaign' && this.missionId === 4 && this.missionStage === 'm4_final_core') {
+      const autoRes = resolveCampaignAutoEnding(this.campaignChoices);
+      this.autoEndingReason = autoRes.reasonKr;
+      this.chooseEnding(autoRes.ending);
+      return;
+    }
+
+    this.exitPointerLockSafe();
     const lookDir = new THREE.Vector3();
     this.camera.getWorldDirection(lookDir);
     const lookAt = this.camera.position.clone().addScaledVector(lookDir, 22);
     const cit = this.worldRefs?.citadel;
-    this.cinematic.startDawn(
+    this.cinematic.startChoice(
       { x: this.player.x, y: this.player.y, z: this.player.z },
       { x: lookAt.x, y: lookAt.y, z: lookAt.z },
       { x: cit?.x ?? 0, y: 12, z: cit?.z ?? -35 }
     );
+    this.emitHudSnapshot(true);
+  }
+
+  private triggerDawnEnding(): void {
+    this.chooseEnding('dawn');
+  }
+
+  private handleEndingImpact(ending: EndingId): void {
+    const cit = this.worldRefs?.citadel;
+    if (ending === 'dawn') {
+      // Handled alongside handleDawnBlackoutImpact (called right before onEndingImpact for dawn)
+      if (this.worldRefs) {
+        this.worldRefs.rescueShuttle.visible = true;
+        this.worldRefs.rescueShuttle.position.set(-48, 42, -52);
+        for (const gr of this.worldRefs.dawnGodRays) {
+          gr.visible = true;
+          (gr.material as THREE.MeshBasicMaterial).color.setHex(0xffd58a);
+        }
+      }
+      return;
+    }
+
+    if (ending === 'symbiosis') {
+      if (cit) {
+        cit.shieldDome.visible = false;
+        (cit.coreBeam.material as THREE.MeshBasicMaterial).color.setHex(0x2dd4bf);
+        (cit.coreWeakpoint.material as THREE.MeshBasicMaterial).color.setHex(0x38e8ff);
+        cit.terminalLight.color.setHex(0x2dd4bf);
+        cit.terminalLight.intensity = 8.5;
+        this.vfx.spawnExplosion(new THREE.Vector3(cit.x, 11.0, cit.z), 30, true);
+        this.vfx.spawnOrbitalBeam(cit.x, cit.z, 0x2dd4bf, 2.2);
+      }
+      if (this.worldRefs) {
+        this.worldRefs.rescueShuttle.visible = true;
+        this.worldRefs.rescueShuttle.position.set(44, 38, -50);
+        for (const gr of this.worldRefs.dawnGodRays) {
+          gr.visible = true;
+          (gr.material as THREE.MeshBasicMaterial).color.setHex(0x2dd4bf);
+        }
+      }
+      // Every surviving AI robot awakens in peaceful cyan harmony!
+      for (const u of this.units) {
+        if (!u.alive) continue;
+        u.rig.visorMat.color.setHex(0x38e8ff);
+        if (u.rig.sniperLaser) u.rig.sniperLaser.visible = false;
+        this.vfx.spawnSparkBurst(new THREE.Vector3(u.x, 1.5, u.z), new THREE.Vector3(0, 1, 0), 8, 0x2dd4bf, 7);
+      }
+      this.audio.playEndingChord('symbiosis');
+      this.empFlashSeq++;
+      this.shake = 1.1;
+      this.recordTimelineSnapshot();
+      this.emitHudSnapshot(true);
+      return;
+    }
+
+    // ENDING C: ASCENSION (THE IRON SOVEREIGN)
+    if (cit) {
+      cit.shieldDome.visible = false;
+      cit.coreBeam.visible = true;
+      cit.coreBeam.scale.set(2.4, 1.35, 2.4);
+      (cit.coreBeam.material as THREE.MeshBasicMaterial).color.setHex(0xff9f1a);
+      (cit.coreWeakpoint.material as THREE.MeshBasicMaterial).color.setHex(0xff4422);
+      cit.terminalLight.color.setHex(0xff4422);
+      cit.terminalLight.intensity = 10.5;
+      this.vfx.spawnExplosion(new THREE.Vector3(cit.x, 12.0, cit.z), 32, false);
+      this.vfx.spawnOrbitalBeam(cit.x, cit.z, 0xff4422, 2.6);
+      this.vfx.spawnLightningArc(
+        new THREE.Vector3(cit.x, 12, cit.z),
+        new THREE.Vector3(cit.x - 16, 48, cit.z - 8),
+        0xff4422,
+        1.1
+      );
+      this.vfx.spawnLightningArc(
+        new THREE.Vector3(cit.x, 12, cit.z),
+        new THREE.Vector3(cit.x + 18, 52, cit.z + 4),
+        0xf5b342,
+        1.1
+      );
+    }
+    // Surviving battle mechs kneel in loyalty with crimson-gold optics!
+    for (const u of this.units) {
+      if (!u.alive) continue;
+      u.rig.visorMat.color.setHex(0xf5b342);
+      u.rig.root.position.y = -0.35;
+      u.rig.root.rotation.x = 0.28;
+      if (u.rig.sniperLaser) u.rig.sniperLaser.visible = false;
+    }
+    this.audio.playEndingChord('ascension');
+    this.blastFlashSeq++;
+    this.shake = 1.65;
+    this.recordTimelineSnapshot();
     this.emitHudSnapshot(true);
   }
 
@@ -2660,20 +6137,105 @@ export class IronAshEngine {
     this.emitHudSnapshot(true);
   }
 
-  private handleCinematicComplete(seq: 'none' | 'opening' | 'breach' | 'dawn'): void {
+  private handleCinematicComplete(
+    seq: 'none' | 'opening' | 'titan_drop' | 'breach' | 'choice' | 'dawn' | 'symbiosis' | 'ascension'
+  ): void {
+    if (this.theaterReturnToTitle && seq !== 'choice') {
+      this.theaterReturnToTitle = false;
+      this.returnToTitle();
+      return;
+    }
     if (seq === 'opening') {
       this.player.equipTimer = 0.48;
       this.camera.rotation.z = 0;
       this.viewmodel.pivot.visible = true;
-    } else if (seq === 'breach') {
+    } else if (seq === 'titan_drop' || seq === 'breach') {
       this.camera.rotation.z = 0;
       this.viewmodel.pivot.visible = true;
       this.player.equipTimer = 0.25;
-    } else if (seq === 'dawn') {
+    } else if (seq === 'dawn' || seq === 'symbiosis' || seq === 'ascension') {
+      this.endingId = seq;
       this.clearHeldInputs();
       this.exitPointerLockSafe();
       this.setPhase('victory');
     }
+    this.emitHudSnapshot(true);
+  }
+
+  // Exo-Thruster Dash / Power Slide (`C`)
+  private triggerExoDashOrSlide(): void {
+    if (
+      this.phase !== 'playing' ||
+      !this.player.alive ||
+      this.cinematic.isCutsceneActive() ||
+      this.vatsActive ||
+      this.player.dashCharges <= 0
+    ) {
+      return;
+    }
+    this.player.dashCharges--;
+    const fwd =
+      (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) -
+      (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0);
+    const strafe = (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0);
+    const sinY = Math.sin(this.player.yaw);
+    const cosY = Math.cos(this.player.yaw);
+    let dx = -sinY * (fwd === 0 && strafe === 0 ? 1 : fwd) + cosY * strafe;
+    let dz = -cosY * (fwd === 0 && strafe === 0 ? 1 : fwd) - sinY * strafe;
+    const len = Math.hypot(dx, dz) || 1;
+    dx /= len;
+    dz /= len;
+    this.player.dashDirX = dx;
+    this.player.dashDirZ = dz;
+
+    const doSlide = this.player.sprinting && this.player.onGround;
+    if (doSlide) {
+      this.player.slideTimer = 0.54;
+      this.player.dashTimer = 0.2;
+      this.fovKick = Math.max(this.fovKick, 6.5);
+      this.audio.playDash(true);
+    } else {
+      this.player.dashTimer = 0.22;
+      this.fovKick = Math.max(this.fovKick, 8.2);
+      this.audio.playDash(false);
+    }
+    this.shake = Math.max(this.shake, 0.16);
+    this.emitHudSnapshot(true);
+  }
+
+  // Valkyrie Orbital Supply Drop (`V`)
+  public callSupplyDrop(): void {
+    if (
+      this.phase !== 'playing' ||
+      !this.player.alive ||
+      this.cinematic.isCutsceneActive() ||
+      this.supplyDropCd > 0
+    ) {
+      return;
+    }
+    this.supplyDropCd = 36;
+    const fx = -Math.sin(this.player.yaw);
+    const fz = -Math.cos(this.player.yaw);
+    const sx = Math.max(-ARENA_HALF_SIZE + 5, Math.min(ARENA_HALF_SIZE - 5, this.player.x + fx * 9));
+    const sz = Math.max(-ARENA_HALF_SIZE + 5, Math.min(ARENA_HALF_SIZE - 5, this.player.z + fz * 9));
+
+    const mesh = buildSupplyPodModel(this.matCache.armorPlate, this.matCache.darkIron);
+    mesh.position.set(sx, 36, sz);
+    this.scene.add(mesh);
+    this.vfx.spawnOrbitalBeam(sx, sz, 0x34d399, 1.35);
+    this.audio.playSupplyDrop();
+    this.triggerRadioComms('supplyDrop', false);
+    this.showAlert('발키리 궤도 보급 포드 투하 — 녹색 신호탄으로 이동해 오버드라이브 확보!', 4.2);
+
+    this.supplyDrops.push({
+      mesh,
+      x: sx,
+      y: 36,
+      z: sz,
+      landed: false,
+      collected: false,
+      life: 45,
+    });
     this.emitHudSnapshot(true);
   }
 
@@ -2788,6 +6350,7 @@ export class IronAshEngine {
     this.hitstop = 0.105;
     this.shake = 0.72;
     this.executions++;
+    this.pushCombatMedal('GLORY EXECUTION', '고주파 블레이드 처형', '#ff4422', true);
     this.analytics.partBreakdown.gloryKill++;
 
     this.dismemberPart(target, 'head', dir, 2.0);
@@ -2829,6 +6392,7 @@ export class IronAshEngine {
     center.y = 0.08;
 
     this.audio.playAirstrikeRadio();
+    this.audio.playJetFlyby(0.95);
     this.triggerRadioComms('airstrike', false);
     this.showAlert('공중 융단 폭격 요청 확인 — 네이팜 · 고폭탄 투하 개시', 4.0);
 
@@ -2934,12 +6498,16 @@ export class IronAshEngine {
     if (
       this.vatsActive ||
       this.cinematic.isCutsceneActive() ||
+      this.isAc130Active() ||
+      this.isFirstPersonSetpieceActive() ||
+      this.platingTimer > 0 ||
       this.player.reloadTimer > 0 ||
       this.player.fireCd > 0
     ) {
       return;
     }
     const w = WEAPONS[this.player.wpnIdx];
+    const att = getWeaponAttachmentSpec(this.weaponAttachment);
     if (this.player.ammo[this.player.wpnIdx] <= 0) {
       this.startReload();
       return;
@@ -2948,8 +6516,10 @@ export class IronAshEngine {
     this.player.ammo[this.player.wpnIdx]--;
     this.analytics.shotsFired++;
     this.player.fireCd = w.fireRate;
-    this.player.recoilPitch += w.recoil * (this.player.ads ? 0.62 : 1.0);
-    const adsDamp = this.player.ads ? 0.58 : 1.0;
+    // MWIII Mounted stability (-68% recoil) × Gunsmith Attachment modifier
+    const mountRecoilMult = (this.mounted ? 0.32 : 1.0) * att.recoilMult;
+    this.player.recoilPitch += w.recoil * (this.player.ads ? 0.62 : 1.0) * mountRecoilMult;
+    const adsDamp = (this.player.ads ? 0.58 : 1.0) * (this.mounted ? 0.4 : 1.0);
     this.player.vmKickZ = Math.min(
       0.26,
       this.player.vmKickZ + (w.id === 0 ? 0.08 : w.id === 4 ? 0.024 : 0.21) * adsDamp
@@ -2968,12 +6538,11 @@ export class IronAshEngine {
     );
     this.fovKick = Math.max(this.fovKick, w.id === 1 ? 3.8 : w.id === 2 || w.id === 3 ? 4.8 : 0.9);
     this.player.muzzleTimer = w.id === 4 ? 0.085 : 0.06;
-    this.shake = Math.max(this.shake, w.shake);
+    this.shake = Math.max(this.shake, w.shake * (this.mounted ? 0.52 : 1.0));
 
-    this.audio.playWeapon(w.sound, 1.0);
+    this.audio.playWeapon(w.sound, 1.0, { isIndoors: this.isIndoors, distanceM: 0 });
     if (w.ejectShell) {
       this.ejectBrassShell();
-      this.audio.playShellClink();
     }
 
     const origin = this.camera.position.clone();
@@ -2982,6 +6551,10 @@ export class IronAshEngine {
     const muzzlePos = new THREE.Vector3(this.player.ads ? 0 : 0.22, -0.14, -0.84).applyMatrix4(
       this.camera.matrixWorld
     );
+    // Cordite barrel gunsmoke wisps rising after ballistic shots
+    if (w.id === 0 || w.id === 1 || w.id === 3) {
+      this.vfx.spawnGunsmoke(muzzlePos, baseDir);
+    }
 
     // [4] HYDRA-7 Guided 3D Missile Launcher
     if (w.projectile === 'rocket') {
@@ -3027,8 +6600,103 @@ export class IronAshEngine {
       return;
     }
 
+    // [6] ZEUS-MK7 Chain Arc Tesla Cannon (3-hop volumetric chain lightning + EMP stun)
+    if (w.chainLightning) {
+      const styleMult = computeStyleRank(this.comboCount, this.styleScore).damageMult;
+      const dmgMult = styleMult * (this.overdriveTimer > 0 ? 1.4 : 1.0);
+      const baseDmg = Math.round(w.dmg * dmgMult);
+
+      this.raycaster.set(origin, baseDir);
+      this.raycaster.far = 48;
+      const worldHits = this.raycaster.intersectObjects(this.worldHitMeshes, false);
+      const maxDist = worldHits.length > 0 ? worldHits[0].distance : 48;
+      const enemyHits = this.raycaster.intersectObjects(this.enemyHitMeshes, false);
+      let hitPos = origin.clone().addScaledVector(baseDir, maxDist);
+
+      if (enemyHits.length > 0 && enemyHits[0].distance < maxDist) {
+        const eh = enemyHits[0];
+        hitPos = eh.point.clone();
+        this.vfx.spawnLightningArc(muzzlePos, hitPos, 0x38e8ff, 0.24);
+        if (eh.object.userData.dropship) {
+          this.damageDropship(baseDmg, Faction.PLAYER);
+        } else {
+          const primary = eh.object.userData.unit as ActiveUnit | undefined;
+          if (primary && primary.alive) {
+            if (!primary.isBoss && primary.stunImmuneTimer <= 0) {
+              primary.empStunTimer = Math.max(primary.empStunTimer, 0.72);
+              primary.stunImmuneTimer = 2.8;
+            }
+            this.damageUnit(
+              primary,
+              baseDmg,
+              eh.object.userData.part as BodyPart,
+              hitPos,
+              baseDir,
+              Faction.PLAYER,
+              FACTION_META[Faction.PLAYER].name,
+              '테슬라 아크 감전'
+            );
+
+            // Chain jump up to 2 nearby enemies within 11.5m
+            const visited = new Set<number>([primary.id]);
+            let prevPos = hitPos.clone();
+            for (let hop = 0; hop < 2; hop++) {
+              let bestNext: ActiveUnit | null = null;
+              let bestDist = 11.5;
+              for (const cand of this.units) {
+                if (!cand.alive || visited.has(cand.id)) continue;
+                const cd = Math.hypot(cand.x - prevPos.x, cand.z - prevPos.z);
+                if (cd < bestDist) {
+                  bestDist = cd;
+                  bestNext = cand;
+                }
+              }
+              if (!bestNext) break;
+              visited.add(bestNext.id);
+              const nextPos = new THREE.Vector3(bestNext.x, 1.3 * bestNext.scale, bestNext.z);
+              this.vfx.spawnLightningArc(prevPos, nextPos, 0x7dd3fc, 0.26);
+              if (!bestNext.isBoss && bestNext.stunImmuneTimer <= 0) {
+                bestNext.empStunTimer = Math.max(bestNext.empStunTimer, 0.55);
+                bestNext.stunImmuneTimer = 2.8;
+              }
+              this.damageUnit(
+                bestNext,
+                Math.round(baseDmg * 0.72),
+                'torso',
+                nextPos,
+                nextPos.clone().sub(prevPos).normalize(),
+                Faction.PLAYER,
+                FACTION_META[Faction.PLAYER].name,
+                '연쇄 번개 과부하'
+              );
+              prevPos = nextPos;
+            }
+          }
+        }
+      } else {
+        this.vfx.spawnLightningArc(muzzlePos, hitPos, 0x38e8ff, 0.2);
+        if (worldHits.length > 0) {
+          const wh = worldHits[0];
+          const ud = wh.object.userData;
+          if (ud.relay && (ud.relay as RelayPylonEntity).alive) {
+            this.damageRelay(ud.relay as RelayPylonEntity, baseDmg, wh.point, Faction.PLAYER);
+          } else if (ud.isServerCore) {
+            this.damageServerCore(baseDmg, wh.point, Faction.PLAYER);
+          } else {
+            this.vfx.spawnSparkBurst(wh.point, new THREE.Vector3(0, 1, 0), 8, 0x38e8ff, 8);
+          }
+        }
+      }
+      if (this.player.ammo[this.player.wpnIdx] <= 0) this.startReload();
+      return;
+    }
+
     // Hitscan weapons ([1] Rifle, [2] Shotgun, [3] Railgun)
-    const spread = this.player.ads ? w.adsSpread : w.spread;
+    const hitscanDmg = Math.round(w.dmg * this.getDamageBoostMultiplier());
+    const spread =
+      (this.player.ads
+        ? w.adsSpread * (this.holdingBreath ? 0.45 : 1.0) * (this.mounted ? 0.52 : 1.0)
+        : w.spread) * att.spreadMult;
     for (let p = 0; p < w.pellets; p++) {
       const dir = baseDir.clone();
       dir.x += (Math.random() - 0.5) * spread * 2;
@@ -3058,7 +6726,7 @@ export class IronAshEngine {
           hitIds.add(u.id);
           this.damageUnit(
             u,
-            w.dmg,
+            hitscanDmg,
             eh.object.userData.part as BodyPart,
             eh.point,
             dir,
@@ -3070,24 +6738,24 @@ export class IronAshEngine {
         if (worldHits.length > 0 && worldHits[0].object.userData.relay) {
           this.damageRelay(
             worldHits[0].object.userData.relay as RelayPylonEntity,
-            w.dmg,
+            hitscanDmg,
             worldHits[0].point,
             Faction.PLAYER
           );
         } else if (worldHits.length > 0 && worldHits[0].object.userData.isServerCore) {
-          this.damageServerCore(w.dmg, worldHits[0].point, Faction.PLAYER);
+          this.damageServerCore(hitscanDmg, worldHits[0].point, Faction.PLAYER);
         }
       } else if (enemyHits.length > 0 && enemyHits[0].distance < maxDist) {
         const eh = enemyHits[0];
         endPoint = eh.point;
         if (eh.object.userData.dropship) {
-          this.damageDropship(w.dmg, Faction.PLAYER);
+          this.damageDropship(hitscanDmg, Faction.PLAYER);
         } else {
           const u = eh.object.userData.unit as ActiveUnit | undefined;
           if (u && u.alive) {
             this.damageUnit(
               u,
-              w.dmg,
+              hitscanDmg,
               eh.object.userData.part as BodyPart,
               eh.point,
               dir,
@@ -3101,14 +6769,15 @@ export class IronAshEngine {
         const wh = worldHits[0];
         const ud = wh.object.userData;
         if (ud.relay && (ud.relay as RelayPylonEntity).alive) {
-          this.damageRelay(ud.relay as RelayPylonEntity, w.dmg, wh.point, Faction.PLAYER);
+          this.damageRelay(ud.relay as RelayPylonEntity, hitscanDmg, wh.point, Faction.PLAYER);
         } else if (ud.isServerCore) {
-          this.damageServerCore(w.dmg, wh.point, Faction.PLAYER);
+          this.damageServerCore(hitscanDmg, wh.point, Faction.PLAYER);
         } else if (ud.barrel && ud.barrel.alive) {
-          ud.barrel.hp -= w.dmg;
+          ud.barrel.hp -= hitscanDmg;
           this.vfx.spawnSparkBurst(wh.point, new THREE.Vector3(0, 1, 0), 8, 0xffaa33, 8);
           if (ud.barrel.hp <= 0) {
             ud.barrel.alive = false;
+            ud.barrel.collider.alive = false;
             this.scene.remove(ud.barrel.mesh);
             const wi = this.worldHitMeshes.indexOf(ud.barrel.mesh);
             if (wi !== -1) this.worldHitMeshes.splice(wi, 1);
@@ -3128,7 +6797,15 @@ export class IronAshEngine {
         } else if (wh.face) {
           const norm = wh.face.normal.clone().transformDirection(wh.object.matrixWorld).normalize();
           this.spawnDecal(wh.point, norm, 'bullet', w.id === 1 ? 0.24 : 0.28);
-          this.vfx.spawnSparkBurst(wh.point, norm, w.id === 1 ? 3 : 6, 0xffc864, 7.5);
+          const surface = wh.object.userData?.surface as 'concrete' | 'metal' | undefined;
+          if (surface === 'metal') {
+            // Sharp metallic ricochet sparks off K-808 armor, sedans, steel shutters & AC units
+            this.vfx.spawnSparkBurst(wh.point, norm, w.id === 1 ? 5 : 10, 0xffd268, 9.5);
+          } else {
+            // Pulverized concrete dust puff + tumbling masonry chips on walls/curbs/sandbags
+            this.vfx.spawnConcreteImpact(wh.point, norm);
+            this.vfx.spawnSparkBurst(wh.point, norm, 2, 0xffc864, 5.5);
+          }
         }
       }
 
@@ -3148,9 +6825,10 @@ export class IronAshEngine {
 
   private startReload(): void {
     const w = WEAPONS[this.player.wpnIdx];
+    const effMag = this.getEffectiveMag(this.player.wpnIdx);
     const currentAmmo = this.player.ammo[this.player.wpnIdx];
-    if (this.player.reloadTimer > 0 || currentAmmo === w.mag) return;
-    const timing = computeReloadTiming(w.reload, currentAmmo, w.mag);
+    if (this.player.reloadTimer > 0 || this.platingTimer > 0 || currentAmmo >= effMag) return;
+    const timing = computeReloadTiming(w.reload, currentAmmo, effMag);
     this.player.reloadTimer = timing.durationSec;
     this.player.reloadDur = timing.durationSec;
     this.player.reloadIsTactical = timing.isTactical;
@@ -3203,10 +6881,28 @@ export class IronAshEngine {
     return this.aiRay.intersectObjects(this.worldHitMeshes, false).length === 0;
   }
 
+  private isConcealedBySmoke(x: number, z: number): boolean {
+    for (let i = 0; i < this.activeSmokeZones.length; i++) {
+      const sz = this.activeSmokeZones[i];
+      if (Math.hypot(x - sz.x, z - sz.z) <= sz.r) return true;
+    }
+    return false;
+  }
+
   private updateEnemies(dt: number): void {
-    let activeAttackers = 0;
-    const bal = computeSpawnBalance(this.wave, this.relaysDestroyed, this.coreShieldDown);
+    // Decay active tactical smoke zones
+    for (let i = this.activeSmokeZones.length - 1; i >= 0; i--) {
+      this.activeSmokeZones[i].timer -= dt;
+      if (this.activeSmokeZones[i].timer <= 0) this.activeSmokeZones.splice(i, 1);
+    }
+    // Sliding 0.45s Attack Token Window (prevents burst spike where 6 enemies shoot in 0.08s)
+    const nowTime = this.time;
+    this.enemyShotTimestamps = this.enemyShotTimestamps.filter((ts) => nowTime - ts < 0.45);
+    const threatSt = computeThreatState(this.threatPoints);
+    const bal = computeSpawnBalance(this.wave, this.relaysDestroyed, this.coreShieldDown, threatSt.level);
     const MAX_CONCURRENT_PLAYER_ATTACKERS = bal.maxConcurrentAttackers;
+    const playerInSmoke = this.isConcealedBySmoke(this.player.x, this.player.z);
+    const playerHorizSpd = Math.hypot(this.player.vx, this.player.vz);
     const animDamp = 1 - Math.exp(-10 * dt);
 
     for (let i = this.units.length - 1; i >= 0; i--) {
@@ -3215,6 +6911,7 @@ export class IronAshEngine {
         this.units.splice(i, 1);
         continue;
       }
+      if (u.stunImmuneTimer > 0) u.stunImmuneTimer = Math.max(0, u.stunImmuneTimer - dt);
 
       // Hit flash, flinch stagger & weapon fire recoil decay
       u.hitFlinch *= Math.exp(-8.5 * dt);
@@ -3291,18 +6988,32 @@ export class IronAshEngine {
       let target: { x: number; y: number; z: number; isPlayer: boolean; unit?: ActiveUnit } | null = null;
       let bestD = Infinity;
 
-      if (this.phase === 'playing' && this.player.alive) {
+      if (this.phase === 'playing' && this.player.alive && !this.isAc130Active()) {
         const dp = Math.hypot(this.player.x - u.x, this.player.z - u.z);
         target = { x: this.player.x, y: this.player.y - 0.3, z: this.player.z, isPlayer: true };
         bestD = dp * 1.08;
       }
-      for (let j = 0; j < this.units.length; j++) {
-        const o = this.units[j];
-        if (!o.alive || o.faction === u.faction) continue;
-        const d = Math.hypot(o.x - u.x, o.z - u.z);
-        if (d < bestD) {
-          bestD = d;
-          target = { x: o.x, y: 1.2 * o.scale, z: o.z, isPlayer: false, unit: o };
+      // During AC-130 FLIR support, hostiles engage the advancing ground squad!
+      if (this.isAc130Active()) {
+        for (const sq of this.squadmates) {
+          if (!sq.active || sq.status !== 'active') continue;
+          const ds = Math.hypot(sq.x - u.x, sq.z - u.z);
+          if (ds < bestD) {
+            bestD = ds;
+            target = { x: sq.x, y: sq.y + 1.2, z: sq.z, isPlayer: false };
+          }
+        }
+      }
+      // 3-Way Faction Civil War is exclusive to Free Roam Sandbox; in Campaign Missions 1-4 all hostiles unite against ROK Alpha Squad!
+      if (this.gameMode === 'freeroam') {
+        for (let j = 0; j < this.units.length; j++) {
+          const o = this.units[j];
+          if (!o.alive || o.faction === u.faction) continue;
+          const d = Math.hypot(o.x - u.x, o.z - u.z);
+          if (d < bestD) {
+            bestD = d;
+            target = { x: o.x, y: 1.2 * o.scale, z: o.z, isPlayer: false, unit: o };
+          }
         }
       }
 
@@ -3316,7 +7027,7 @@ export class IronAshEngine {
       u.yaw += diff * Math.min(1, dt * 8.5);
       u.rig.root.rotation.y = u.yaw;
 
-      const eyePos = new THREE.Vector3(u.x, 1.42 * u.scale, u.z);
+      const eyePos = new THREE.Vector3(u.x, u.y + 1.42 * u.scale, u.z);
       const tgtPos = new THREE.Vector3(target.x, target.y, target.z);
       const canSee = d < 44 && this.hasLineOfSight3D(eyePos, tgtPos);
 
@@ -3383,54 +7094,185 @@ export class IronAshEngine {
       }
 
       const ml = Math.hypot(mx, mz) || 1;
-      const moveSpeed = u.burnTimer > 0 ? u.speed * 0.75 : u.speed;
-      u.x += (mx / ml) * moveSpeed * dt;
-      u.z += (mz / ml) * moveSpeed * dt;
-      resolveXZCollision(u, u.r, this.colliders, ARENA_HALF_SIZE);
+      // Keep elevated 2F balcony snipers perched cleanly on their overlook!
+      const moveSpeed = u.y > 1.0 ? 0 : u.burnTimer > 0 ? u.speed * 0.75 : u.speed;
+      if (moveSpeed > 0) {
+        u.x += (mx / ml) * moveSpeed * dt;
+        u.z += (mz / ml) * moveSpeed * dt;
+        // Maintain clean first-person camera standoff so melee rushers never clip through the viewmodel
+        const pdx = u.x - this.player.x;
+        const pdz = u.z - this.player.z;
+        const pDist = Math.hypot(pdx, pdz);
+        const minStand = u.r + 1.45;
+        if (pDist > 0.001 && pDist < minStand && Math.abs(u.y - (this.player.y - 1.7)) < 1.8) {
+          u.x = this.player.x + (pdx / pDist) * minStand;
+          u.z = this.player.z + (pdz / pDist) * minStand;
+        }
+        resolveXZCollision(u, u.r, this.colliders, ARENA_HALF_SIZE, u.y);
+      }
 
       // Articulated robot locomotion: hover drone banking vs biped stride, hip bob, torso counter-twist, flinch & firing recoil
       if (u.archetype === UnitArchetype.ROBOT_STALKER) {
-        const hoverY = Math.sin(this.time * 5.2 + u.id) * 0.24 + 0.08;
+        const hoverY = u.y + Math.sin(this.time * 5.2 + u.id) * 0.24 + 0.08;
         u.rig.root.position.set(u.x, hoverY, u.z);
         const targetBank = -u.strafeDir * 0.24 + Math.sin(this.time * 3.1 + u.id) * 0.06;
         const targetPitch = 0.22 - u.hitFlinch * 0.42;
         u.rig.root.rotation.z += (targetBank - u.rig.root.rotation.z) * animDamp;
         u.rig.root.rotation.x += (targetPitch - u.rig.root.rotation.x) * animDamp;
       } else {
-        u.walkPhase += dt * moveSpeed * (u.isBoss ? 1.45 : 2.15);
-        const stride = Math.sin(u.walkPhase);
-        const hipBob = Math.abs(Math.cos(u.walkPhase)) * (u.isBoss ? 0.065 : 0.085) * u.scale;
-        u.rig.root.position.set(u.x, hipBob, u.z);
+        // Fluid 2-bone human/mech articulated stride, knee bend, tactical rifle-shoulder stance & breathing idle!
+        const moving = moveSpeed > 0.1;
+        if (moving) {
+          u.walkPhase += dt * moveSpeed * (u.isBoss ? 1.4 : 2.1);
+        }
+        const stride = moving ? Math.sin(u.walkPhase) : 0;
+        const cosStride = moving ? Math.cos(u.walkPhase) : 1;
+        const breath = Math.sin(this.time * 2.4 + u.id * 1.7);
+        const hipBob = moving
+          ? Math.abs(cosStride) * (u.isBoss ? 0.055 : 0.075) * u.scale
+          : breath * 0.012 * u.scale;
+        u.rig.root.position.set(u.x, u.y + hipBob, u.z);
 
-        const forwardLean = (u.isBoss ? 0.05 : 0.11) - u.hitFlinch * 0.34;
-        const lateralRoll = stride * (u.isBoss ? 0.035 : 0.055);
+        const forwardLean = (moving ? (u.isBoss ? 0.06 : 0.12) : 0.02) - u.hitFlinch * 0.34;
+        const lateralRoll = stride * (u.isBoss ? 0.028 : 0.048);
         u.rig.root.rotation.x += (forwardLean - u.rig.root.rotation.x) * animDamp;
         u.rig.root.rotation.z += (lateralRoll - u.rig.root.rotation.z) * animDamp;
 
-        const legAmp = u.isBoss ? 0.48 : 0.68;
-        if (u.rig.parts.leftLeg) u.rig.parts.leftLeg.rotation.x = stride * legAmp;
-        if (u.rig.parts.rightLeg) u.rig.parts.rightLeg.rotation.x = -stride * legAmp;
+        const legAmp = u.isBoss ? 0.46 : 0.66;
+        if (u.rig.parts.leftLeg) {
+          u.rig.parts.leftLeg.rotation.x += (stride * legAmp - u.rig.parts.leftLeg.rotation.x) * animDamp;
+        }
+        if (u.rig.parts.rightLeg) {
+          u.rig.parts.rightLeg.rotation.x += (-stride * legAmp - u.rig.parts.rightLeg.rotation.x) * animDamp;
+        }
+        // True 2-bone knee flexion on recovery leg swing (eliminates rigid wooden peg-leg look!)
+        if (u.rig.knees?.left) {
+          const lKneeTarget = moving ? 0.12 + Math.max(0, -cosStride) * 0.72 : 0.06;
+          u.rig.knees.left.rotation.x += (lKneeTarget - u.rig.knees.left.rotation.x) * animDamp;
+        }
+        if (u.rig.knees?.right) {
+          const rKneeTarget = moving ? 0.12 + Math.max(0, cosStride) * 0.72 : 0.06;
+          u.rig.knees.right.rotation.x += (rKneeTarget - u.rig.knees.right.rotation.x) * animDamp;
+        }
         if (u.rig.parts.torso) {
-          u.rig.parts.torso.rotation.y = -stride * 0.12;
+          const twistTarget = canSee ? -0.14 : -stride * 0.13;
+          u.rig.parts.torso.rotation.y += (twistTarget - u.rig.parts.torso.rotation.y) * animDamp;
+          u.rig.parts.torso.rotation.x += ((breath * 0.018 - u.hitFlinch * 0.2) - u.rig.parts.torso.rotation.x) * animDamp;
+        }
+        if (u.rig.parts.head) {
+          const headYawTarget = canSee ? 0.12 : Math.sin(this.time * 1.1 + u.id) * 0.08;
+          u.rig.parts.head.rotation.y += (headYawTarget - u.rig.parts.head.rotation.y) * animDamp;
         }
         if (u.rig.parts.leftArm) {
-          u.rig.parts.leftArm.rotation.x = -stride * 0.58 - u.hitFlinch * 0.35;
+          const lArmTarget = canSee ? -0.58 - u.fireRecoil * 0.22 : -stride * 0.45 - 0.18;
+          u.rig.parts.leftArm.rotation.x += (lArmTarget - u.hitFlinch * 0.32 - u.rig.parts.leftArm.rotation.x) * animDamp;
+        }
+        if (u.rig.elbows?.left) {
+          const lElbTarget = canSee ? -0.82 : -0.42;
+          u.rig.elbows.left.rotation.x += (lElbTarget - u.rig.elbows.left.rotation.x) * animDamp;
         }
         if (u.rig.parts.rightArm) {
-          const aimPitch = canSee ? -0.52 - u.fireRecoil * 0.48 : stride * 0.42;
-          u.rig.parts.rightArm.rotation.x = aimPitch - u.hitFlinch * 0.25;
+          const rArmTarget = canSee ? -0.64 - u.fireRecoil * 0.42 : stride * 0.25 - 0.24;
+          u.rig.parts.rightArm.rotation.x += (rArmTarget - u.hitFlinch * 0.25 - u.rig.parts.rightArm.rotation.x) * animDamp;
+        }
+        if (u.rig.elbows?.right) {
+          const rElbTarget = canSee ? -0.88 - u.fireRecoil * 0.18 : -0.52;
+          u.rig.elbows.right.rotation.x += (rElbTarget - u.rig.elbows.right.rotation.x) * animDamp;
         }
       }
 
-      // Attack logic (with attack token budget against player for fairness)
+      // Sniper Laser Telegraph (properly respects fireCd & breaks cleanly inside Tactical Smoke!)
+      if (u.archetype === UnitArchetype.SYNDICATE_SNIPER && u.rig.sniperLaser) {
+        if (u.fireCd > 0) {
+          u.fireCd -= dt;
+          u.sniperCharge = 0;
+          u.rig.sniperLaser.visible = false;
+          continue;
+        }
+        if (canSee && target.isPlayer && !playerInSmoke && d < 52 && !u.missing.rightArm) {
+          if (u.sniperCharge === 0) {
+            this.audio.playSniperLock();
+            this.triggerRadioComms('sniperWarning', true);
+          }
+          u.sniperCharge += dt;
+          u.rig.sniperLaser.visible = true;
+          u.rig.sniperLaser.scale.set(1, 1, Math.min(48, d));
+          const lMat = u.rig.sniperLaser.material as THREE.MeshBasicMaterial;
+          lMat.opacity = 0.42 + Math.min(0.55, u.sniperCharge * 0.5);
+          if (u.sniperCharge >= 1.28) {
+            u.sniperCharge = 0;
+            u.rig.sniperLaser.visible = false;
+            u.fireCd = u.fireRate;
+            const shotDir = tgtPos.clone().sub(eyePos).normalize();
+            this.spawnTracer(eyePos, tgtPos.clone().addScaledVector(shotDir, 2), 0xff1e42, 0.24, 'railgun');
+            this.audio.playWeapon('railgun', Math.max(0.22, (1 - d / 60) * 0.65), {
+              isIndoors: false,
+              distanceM: d,
+            });
+            const sniperEvade =
+              this.player.dashTimer > 0.02 || this.player.slideTimer > 0.02
+                ? 0.1
+                : playerHorizSpd > 6.5
+                  ? 0.42
+                  : 0.68;
+            if (Math.random() < sniperEvade) {
+              this.damagePlayer(u.dmg, eyePos, u.name);
+            }
+          }
+        } else {
+          u.sniperCharge = 0;
+          u.rig.sniperLaser.visible = false;
+        }
+        continue;
+      }
+
+      if (u.isBoss && u.bossPhase >= 2 && this.phase === 'playing' && this.player.alive) {
+        u.bossMissileCd -= dt;
+        if (u.bossMissileCd <= 0) {
+          u.bossMissileCd = 5.8;
+          this.audio.playArtilleryWhistle();
+          for (let m = 0; m < 2; m++) {
+            const mx2 = Math.max(
+              -ARENA_HALF_SIZE + 4,
+              Math.min(ARENA_HALF_SIZE - 4, this.player.x + (Math.random() - 0.5) * 7)
+            );
+            const mz2 = Math.max(
+              -ARENA_HALF_SIZE + 4,
+              Math.min(ARENA_HALF_SIZE - 4, this.player.z + (Math.random() - 0.5) * 7)
+            );
+            const ring = new THREE.Mesh(
+              new THREE.RingGeometry(0.4, 4.4, 24),
+              new THREE.MeshBasicMaterial({
+                color: 0xff2244,
+                side: THREE.DoubleSide,
+                transparent: true,
+                opacity: 0.65,
+              })
+            );
+            ring.rotation.x = -Math.PI / 2;
+            ring.position.set(mx2, 0.08, mz2);
+            this.scene.add(ring);
+            this.artilleryStrikes.push({
+              x: mx2,
+              z: mz2,
+              timer: 1.5 + m * 0.35,
+              maxTimer: 1.5 + m * 0.35,
+              ring,
+              isAirstrike: false,
+            });
+          }
+        }
+      }
+
+      // Attack logic (time-windowed Attack Token Director + fair distance/movement/cover/smoke accuracy!)
       u.fireCd -= dt;
       const isMeleeRange = u.archetype === UnitArchetype.ROBOT_STALKER && d < 2.6;
       if (u.fireCd <= 0 && (canSee || isMeleeRange) && d < 42) {
-        if (target.isPlayer && activeAttackers >= MAX_CONCURRENT_PLAYER_ATTACKERS) {
-          u.fireCd = 0.25;
+        if (target.isPlayer && this.enemyShotTimestamps.length >= MAX_CONCURRENT_PLAYER_ATTACKERS) {
+          u.fireCd = 0.28;
           continue;
         }
-        if (target.isPlayer) activeAttackers++;
+        if (target.isPlayer) this.enemyShotTimestamps.push(nowTime);
 
         u.fireRecoil = 1.0;
         u.fireCd = u.fireRate * (u.missing.rightArm ? 2.4 : 0.85 + Math.random() * 0.35);
@@ -3438,12 +7280,13 @@ export class IronAshEngine {
         if (dP < 50 && this.phase === 'playing') {
           this.audio.playWeapon(
             u.isRobot ? 'robot_laser' : u.archetype === UnitArchetype.RAIDER_BERSERKER ? 'shotgun' : 'rifle',
-            Math.max(0.08, (1 - dP / 50) * 0.45)
+            Math.max(0.08, (1 - dP / 50) * 0.48),
+            { isIndoors: this.isIndoors && dP < 14, distanceM: dP }
           );
         }
 
         const shotDir = tgtPos.clone().sub(eyePos).normalize();
-        const acc = u.missing.rightArm ? 0.26 : 0.085;
+        const acc = u.missing.rightArm ? 0.26 : playerInSmoke ? 0.34 : 0.085;
         shotDir.x += (Math.random() - 0.5) * acc;
         shotDir.y += (Math.random() - 0.5) * acc * 0.6;
         shotDir.z += (Math.random() - 0.5) * acc;
@@ -3458,7 +7301,19 @@ export class IronAshEngine {
               : 0x6ea8fe;
         this.spawnTracer(eyePos, endPt, tracerColor, 0.09, 'laser');
 
-        const hitRoll = u.missing.rightArm ? 0.18 : target.isPlayer ? 0.38 : 0.64;
+        let hitRoll = u.missing.rightArm ? 0.16 : 0.64;
+        if (target.isPlayer) {
+          const distAcc = Math.max(0.15, 0.44 - d * 0.0065);
+          const moveMult =
+            this.player.dashTimer > 0.02 || this.player.slideTimer > 0.02
+              ? 0.22
+              : playerHorizSpd > 6.5
+                ? 0.74
+                : 1.0;
+          const coverMult = this.mounted ? 0.64 : 1.0;
+          const smokeMult = playerInSmoke ? 0.1 : 1.0;
+          hitRoll = (u.missing.rightArm ? 0.12 : distAcc) * moveMult * coverMult * smokeMult;
+        }
         if (Math.random() < hitRoll) {
           if (target.isPlayer) {
             this.damagePlayer(u.dmg, eyePos, u.name);
@@ -3521,11 +7376,21 @@ export class IronAshEngine {
       this.updateAtmosphere(clampedRealDt);
 
       const mood: BgmMood =
-        seq === 'dawn' ? 'dawn' : seq === 'breach' ? 'breach' : 'opening';
+        seq === 'dawn'
+          ? 'dawn'
+          : seq === 'symbiosis'
+            ? 'symbiosis'
+            : seq === 'ascension'
+              ? 'ascension'
+              : seq === 'choice'
+                ? 'choice'
+                : seq === 'breach' || seq === 'titan_drop'
+                  ? 'breach'
+                  : 'opening';
       this.audio.setDynamicState({
         playing: true,
-        intensity: seq === 'breach' ? 1.0 : 0.25,
-        bossActive: seq === 'breach',
+        intensity: seq === 'breach' || seq === 'titan_drop' ? 1.0 : 0.25,
+        bossActive: seq === 'breach' || seq === 'titan_drop',
         vatsActive: false,
         mood,
       });
@@ -3552,17 +7417,56 @@ export class IronAshEngine {
       this.requestPointerLockSafe();
     }
 
+    if (this.killCamTimer > 0) {
+      this.killCamTimer = Math.max(0, this.killCamTimer - clampedRealDt);
+      if (this.killCamTimer <= 0) this.killCamBanner = null;
+    }
+    if (this.adrenalineTimer > 0) {
+      this.adrenalineTimer = Math.max(0, this.adrenalineTimer - clampedRealDt);
+    }
+
     if (this.hitstop > 0) {
       this.hitstop -= clampedRealDt;
       this.timeScale = 0.06;
+    } else if (this.breachSlowmoTimer > 0) {
+      // Iconic Call of Duty 0.2x Slow-Mo Breach & Clear!
+      this.timeScale += (0.22 - this.timeScale) * Math.min(1, clampedRealDt * 24);
     } else if (this.vatsActive) {
       this.timeScale += (VATS_TIME_SCALE - this.timeScale) * Math.min(1, clampedRealDt * 22);
+    } else if (this.killCamTimer > 0) {
+      this.timeScale += (0.28 - this.timeScale) * Math.min(1, clampedRealDt * 20);
+    } else if (this.adrenalineTimer > 0) {
+      this.timeScale += (0.38 - this.timeScale) * Math.min(1, clampedRealDt * 18);
     } else {
       this.timeScale += (1.0 - this.timeScale) * Math.min(1, clampedRealDt * 18);
     }
 
     const dt = clampedRealDt * this.timeScale;
     this.time += dt;
+
+    // Combo decay, Overdrive buff, Supply Drop cooldown & Ghost-9 delayed radio intro
+    if (this.comboTimer > 0) {
+      this.comboTimer -= clampedRealDt;
+      if (this.comboTimer <= 0) {
+        this.comboCount = 0;
+        this.styleScore = Math.max(0, this.styleScore - 50);
+      }
+    }
+    if (this.styleScore > 0) {
+      this.styleScore = Math.max(0, this.styleScore - clampedRealDt * 5.5);
+    }
+    if (this.overdriveTimer > 0) {
+      this.overdriveTimer = Math.max(0, this.overdriveTimer - clampedRealDt);
+    }
+    if (this.supplyDropCd > 0) {
+      this.supplyDropCd = Math.max(0, this.supplyDropCd - clampedRealDt);
+    }
+    if (this.ghostIntroTimer > 0 && !this.triggeredComms.has('ghostIntro')) {
+      this.ghostIntroTimer -= dt;
+      if (this.ghostIntroTimer <= 0) {
+        this.triggerRadioComms('ghostIntro', true);
+      }
+    }
 
     if (this.alertTimer > 0) {
       this.alertTimer -= clampedRealDt;
@@ -3573,11 +7477,35 @@ export class IronAshEngine {
       if (this.calloutTimer <= 0) this.calloutText = null;
     }
 
-    // Player movement, ADS, recoil, viewmodel
-    if (this.player.alive) {
+    // Decay active CoD combat medal popups
+    for (let i = this.activeMedals.length - 1; i >= 0; i--) {
+      this.activeMedals[i].life -= clampedRealDt;
+      if (this.activeMedals[i].life <= 0) {
+        this.activeMedals.splice(i, 1);
+      }
+    }
+
+    // Player movement, ADS, recoil, viewmodel (skipped while driving K2-X Tank, orbiting AC-130, or in uncut vehicle setpieces)
+    if (
+      this.player.alive &&
+      !this.isAc130Active() &&
+      !this.isFirstPersonSetpieceActive() &&
+      !this.tank.driving
+    ) {
       if (this.player.invulnTimer > 0) this.player.invulnTimer -= clampedRealDt;
       this.player.ads = this.mouseRight && this.player.reloadTimer <= 0 && !this.vatsActive;
+      if (this.player.ads !== this.prevAds) {
+        this.prevAds = this.player.ads;
+        this.audio.playAdsClick(this.player.ads);
+      }
       const w = WEAPONS[this.player.wpnIdx];
+      const hasOptic = w.id === 0 || w.id === 2 || w.id === 3 || w.id === 5;
+      this.holdingBreath = this.player.ads && this.keys.has('ShiftLeft') && hasOptic;
+
+      // Smooth 0..1 ADS optical alignment blend
+      this.adsBlend += ((this.player.ads ? 1 : 0) - this.adsBlend) * Math.min(1, clampedRealDt * 18);
+      if (this.adsBlend < 0.005) this.adsBlend = 0;
+      else if (this.adsBlend > 0.995) this.adsBlend = 1;
 
       const fwd =
         (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) -
@@ -3585,6 +7513,13 @@ export class IronAshEngine {
       const strafe = (this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0);
       const sprinting = this.keys.has('ShiftLeft') && fwd > 0 && !this.player.ads;
       this.player.sprinting = sprinting;
+
+      // Cancel weapon inspect immediately on combat action
+      if (this.player.ads || sprinting || this.mouseLeft || this.player.reloadTimer > 0) {
+        this.inspectTimer = 0;
+      } else if (this.inspectTimer > 0) {
+        this.inspectTimer = Math.max(0, this.inspectTimer - clampedRealDt);
+      }
 
       this.fovKick *= Math.pow(0.0005, clampedRealDt);
       if (this.fovKick < 0.04) this.fovKick = 0;
@@ -3604,8 +7539,18 @@ export class IronAshEngine {
       if (this.player.reloadTimer > 0) {
         this.player.reloadTimer -= dt;
         if (this.player.reloadTimer <= 0) {
-          this.player.ammo[this.player.wpnIdx] = w.mag;
+          this.player.ammo[this.player.wpnIdx] = this.getEffectiveMag(this.player.wpnIdx);
           this.player.reloadIsTactical = false;
+        }
+      }
+      if (this.platingTimer > 0) {
+        this.platingTimer -= clampedRealDt;
+        if (this.platingTimer <= 0) {
+          this.platingTimer = 0;
+          this.player.armor = Math.min(this.player.maxArmor, this.player.armor + 45);
+          this.audio.playMountClick(false);
+          this.showCallout('방탄판 장착 완료 · +45 ARMOR', '#38d9ff', 1.6);
+          this.emitHudSnapshot(true);
         }
       }
 
@@ -3623,6 +7568,18 @@ export class IronAshEngine {
         this.player.yaw += turnInput * 2.1 * clampedRealDt;
       }
 
+      const dashStep = stepDashCharges(
+        this.player.dashCharges,
+        this.player.dashRechargeTimer,
+        clampedRealDt,
+        DASH_MAX_CHARGES,
+        DASH_RECHARGE_SEC
+      );
+      this.player.dashCharges = dashStep.charges;
+      this.player.dashRechargeTimer = dashStep.rechargeTimer;
+      if (this.player.dashTimer > 0) this.player.dashTimer = Math.max(0, this.player.dashTimer - clampedRealDt);
+      if (this.player.slideTimer > 0) this.player.slideTimer = Math.max(0, this.player.slideTimer - clampedRealDt);
+
       const moveSpd = this.player.ads ? 4.8 : sprinting ? 11.4 : 7.9;
 
       const sinY = Math.sin(this.player.yaw);
@@ -3635,8 +7592,17 @@ export class IronAshEngine {
         mz /= ml;
       }
 
-      this.player.vx += (mx * moveSpd - this.player.vx) * Math.min(1, dt * 13);
-      this.player.vz += (mz * moveSpd - this.player.vz) * Math.min(1, dt * 13);
+      if (this.player.dashTimer > 0) {
+        this.player.vx = this.player.dashDirX * 22.5;
+        this.player.vz = this.player.dashDirZ * 22.5;
+      } else if (this.player.slideTimer > 0) {
+        const slideSpeed = 10.5 + (this.player.slideTimer / 0.54) * 7.5;
+        this.player.vx = this.player.dashDirX * slideSpeed;
+        this.player.vz = this.player.dashDirZ * slideSpeed;
+      } else {
+        this.player.vx += (mx * moveSpd - this.player.vx) * Math.min(1, dt * 13);
+        this.player.vz += (mz * moveSpd - this.player.vz) * Math.min(1, dt * 13);
+      }
 
       const wasInAir = !this.player.onGround;
       const prevVy = this.player.vy;
@@ -3644,17 +7610,143 @@ export class IronAshEngine {
       this.player.x += this.player.vx * dt;
       this.player.y += this.player.vy * dt;
       this.player.z += this.player.vz * dt;
-      if (this.player.y <= 1.7) {
+      const eyeOffset = this.player.slideTimer > 0 ? 1.06 : 1.7;
+      const prevFeetY = Math.max(0, this.player.y - eyeOffset);
+      const floorY = this.getFloorHeightAt(this.player.x, this.player.z, prevFeetY);
+      const targetEyeY = floorY + eyeOffset;
+      const snapMargin = this.player.onGround ? 0.34 : 0.05;
+      if (this.player.y <= targetEyeY + snapMargin && this.player.vy <= 0.1) {
         if (wasInAir && prevVy < -4.5) {
           this.player.landDip = Math.min(0.16, Math.abs(prevVy) * 0.015);
+          this.audio.playFootstep(
+            this.getFootstepSurfaceAt(this.player.x, this.player.z, floorY),
+            true,
+            this.isIndoors
+          );
+          this.stepDistAccum = 0;
         }
-        this.player.y = 1.7;
+        this.player.y += (targetEyeY - this.player.y) * Math.min(1, clampedRealDt * 24);
+        if (this.player.slideTimer <= 0 && Math.abs(this.player.y - targetEyeY) < 0.03) {
+          this.player.y = targetEyeY;
+        }
         this.player.vy = 0;
         this.player.onGround = true;
+      } else if (this.player.y > targetEyeY + 0.38) {
+        this.player.onGround = false;
       }
-      resolveXZCollision(this.player, 0.55, this.colliders, ARENA_HALF_SIZE);
+      resolveXZCollision(this.player, 0.55, this.colliders, ARENA_HALF_SIZE, floorY);
 
-      // Smooth landing dip recovery + subtle strafe camera banking
+      // Pillar 3: Surface-Aware Military Boot Footsteps (Wet Asphalt / Hollow Metal Deck / Shattered Glass Rubble)
+      const horizSpeed = Math.hypot(this.player.vx, this.player.vz);
+      if (
+        this.player.onGround &&
+        this.player.slideTimer <= 0 &&
+        this.player.dashTimer <= 0 &&
+        horizSpeed > 1.35 &&
+        !this.isAc130Active() &&
+        !this.isFirstPersonSetpieceActive()
+      ) {
+        this.stepDistAccum += horizSpeed * dt;
+        const stepStride = sprinting ? 2.55 : this.player.ads ? 1.85 : 2.15;
+        if (this.stepDistAccum >= stepStride) {
+          this.stepDistAccum -= stepStride;
+          this.audio.playFootstep(
+            this.getFootstepSurfaceAt(this.player.x, this.player.z, floorY),
+            sprinting,
+            this.isIndoors
+          );
+        }
+      } else if (horizSpeed <= 0.4) {
+        this.stepDistAccum = Math.min(this.stepDistAccum, 0.9);
+      }
+
+      // MWIII Tactical Gunplay: Q/E ADS Leaning, Auto Cover/Wall Mounting & Weapon Wall Collision
+      const isReloading = this.player.reloadTimer > 0;
+      const rawLean =
+        this.player.ads && !this.vatsActive && !isReloading
+          ? (this.keys.has('KeyE') ? 1 : 0) - (this.keys.has('KeyQ') ? 1 : 0)
+          : 0;
+      this.leanDir = rawLean as -1 | 0 | 1;
+      this.leanBlend += (this.leanDir - this.leanBlend) * Math.min(1, clampedRealDt * 12);
+      if (Math.abs(this.leanBlend) < 0.004) this.leanBlend = 0;
+
+      // Forward horizontal & right vectors for cover/wall/lean raycasts
+      const fwdX = -sinY;
+      const fwdZ = -cosY;
+      const rightX = cosY;
+      const rightZ = -sinY;
+
+      // Clamp lateral lean distance against walls so camera never clips into cover
+      let leanOffset = this.leanBlend * 0.44;
+      if (Math.abs(leanOffset) > 0.01) {
+        const leanSign = leanOffset > 0 ? 1 : -1;
+        this._v1.set(this.player.x, this.player.y - 0.08, this.player.z);
+        this._v2.set(rightX * leanSign, 0, rightZ * leanSign);
+        this.tacticalRay.set(this._v1, this._v2);
+        this.tacticalRay.far = Math.abs(leanOffset) + 0.28;
+        const leanHits = this.tacticalRay.intersectObjects(this.worldHitMeshes, false);
+        if (leanHits.length > 0) {
+          leanOffset = leanSign * Math.max(0, leanHits[0].distance - 0.28);
+        }
+      }
+
+      // Forward eye-level wall proximity check (drives Weapon Wall Collision & prevents mounting blind walls)
+      this._v1.set(this.player.x + rightX * leanOffset, this.player.y - 0.06, this.player.z + rightZ * leanOffset);
+      this._v2.set(fwdX, 0, fwdZ);
+      this.tacticalRay.set(this._v1, this._v2);
+      this.tacticalRay.far = 1.25;
+      const eyeWallHits = this.tacticalRay.intersectObjects(this.worldHitMeshes, false);
+      const eyeWallDist = eyeWallHits.length > 0 ? eyeWallHits[0].distance : 99;
+
+      // Auto Cover / Corner Mounting while ADS near waist-high cover (sandbags/parapet/vehicles) or wall edge
+      let canMount = false;
+      if (
+        this.player.ads &&
+        !sprinting &&
+        !isReloading &&
+        !this.vatsActive &&
+        this.player.onGround &&
+        this.player.slideTimer <= 0 &&
+        this.player.dashTimer <= 0 &&
+        eyeWallDist > 1.08
+      ) {
+        // 1) Over-cover mount check (waist-level forward probe hits sandbag/parapet/car while eye line is clear!)
+        this._v1.set(this.player.x, floorY + 0.98, this.player.z);
+        this._v2.set(fwdX, 0, fwdZ);
+        this.tacticalRay.set(this._v1, this._v2);
+        this.tacticalRay.far = 1.48;
+        if (this.tacticalRay.intersectObjects(this.worldHitMeshes, false).length > 0) {
+          canMount = true;
+        } else {
+          // 2) Corner-wall side mount check (adjacent left or right wall edge within 0.96m)
+          for (const side of [-1, 1] as const) {
+            this._v1.set(this.player.x, floorY + 1.42, this.player.z);
+            this._v2.set(rightX * side, 0, rightZ * side);
+            this.tacticalRay.set(this._v1, this._v2);
+            this.tacticalRay.far = 0.96;
+            if (this.tacticalRay.intersectObjects(this.worldHitMeshes, false).length > 0) {
+              canMount = true;
+              break;
+            }
+          }
+        }
+      }
+      this.mounted = canMount;
+      if (this.mounted !== this.prevMounted) {
+        this.prevMounted = this.mounted;
+        this.audio.playMountClick(this.mounted);
+      }
+
+      // Weapon Wall Collision: raise weapon barrel cleanly when pressing tight against solid walls
+      const targetWallBlock =
+        !isReloading && !this.mounted && eyeWallDist < 0.88
+          ? Math.max(0, Math.min(1, (0.88 - eyeWallDist) / 0.44))
+          : 0;
+      this.wallBlockBlend += (targetWallBlock - this.wallBlockBlend) * Math.min(1, clampedRealDt * 16);
+      if (this.wallBlockBlend < 0.005) this.wallBlockBlend = 0;
+      this.wallBlocked = this.wallBlockBlend > 0.25;
+
+      // Smooth landing dip recovery + subtle strafe, slide & Q/E peeking camera banking
       this.player.landDip *= Math.pow(0.0008, clampedRealDt);
       this.player.recoilPitch *= Math.pow(0.002, clampedRealDt);
       this.shake *= Math.pow(0.001, clampedRealDt);
@@ -3663,12 +7755,14 @@ export class IronAshEngine {
       const shkX = (Math.random() - 0.5) * this.shake * 0.24;
       const shkY = (Math.random() - 0.5) * this.shake * 0.24;
       const shkRot = (Math.random() - 0.5) * this.shake * 0.075;
-      const strafeTilt = -strafe * (this.player.ads ? 0.004 : 0.015);
+      const slideTilt = this.player.slideTimer > 0 ? -0.095 : 0;
+      const leanTilt = -this.leanBlend * 0.155;
+      const strafeTilt = -strafe * (this.player.ads ? 0.004 : 0.015) + slideTilt + leanTilt;
 
       this.camera.position.set(
-        this.player.x + shkX,
-        this.player.y - this.player.landDip + shkY,
-        this.player.z
+        this.player.x + rightX * leanOffset + shkX,
+        this.player.y - this.player.landDip - Math.abs(this.leanBlend) * 0.055 + shkY,
+        this.player.z + rightZ * leanOffset
       );
       this.camera.rotation.y = this.player.yaw;
       this.camera.rotation.x = Math.max(-1.42, Math.min(1.42, this.player.pitch + this.player.recoilPitch));
@@ -3688,18 +7782,39 @@ export class IronAshEngine {
       this.player.vmRecoilPitch *= Math.exp(-13.0 * clampedRealDt);
       this.player.vmRecoilRoll *= Math.exp(-11.0 * clampedRealDt);
 
-      const bobAmpX = this.player.ads ? 0.0022 : sprinting ? 0.019 : 0.012;
-      const bobAmpY = this.player.ads ? 0.0018 : sprinting ? 0.017 : 0.010;
+      const breathScale = (this.holdingBreath ? 0.14 : 1.0) * (this.mounted ? 0.15 : 1.0);
+      const bobAmpX = (this.player.ads ? 0.0018 : sprinting ? 0.019 : 0.012) * breathScale;
+      const bobAmpY = (this.player.ads ? 0.0014 : sprinting ? 0.017 : 0.010) * breathScale;
       const bobX = Math.sin(this.player.vmBob) * bobAmpX * this.player.vmBobBlend;
       const bobY = (0.5 - 0.5 * Math.cos(this.player.vmBob * 2)) * bobAmpY * this.player.vmBobBlend;
       const bobRoll =
-        Math.sin(this.player.vmBob) * (this.player.ads ? 0.004 : sprinting ? 0.036 : 0.018) * this.player.vmBobBlend;
-      const breathY = Math.sin(this.time * 2.1) * (this.player.ads ? 0.0009 : 0.0028);
+        Math.sin(this.player.vmBob) *
+        (this.player.ads ? 0.003 : sprinting ? 0.036 : 0.018) *
+        this.player.vmBobBlend *
+        breathScale;
+      const breathY = Math.sin(this.time * 2.1) * (this.player.ads ? 0.0008 : 0.0028) * breathScale;
 
-      const tx = this.player.ads ? 0.0 : sprinting ? 0.2 : 0.235;
-      const ty = this.player.ads ? -0.155 : sprinting ? -0.26 : -0.232;
-      const tz = this.player.ads ? -0.45 : -0.58;
-      const isReloading = this.player.reloadTimer > 0;
+      // Exact per-weapon transparent optical sight alignment (camera eye snaps dead-center through the crystal lens!)
+      const adsAlignByWeapon: Array<[number, number, number]> = [
+        [0.0, -0.124, -0.34], // [1] M41-X Rifle -> Open EOTech Reflex Holo Glass
+        [0.0, -0.095, -0.44], // [2] DOOM-99 Shotgun -> Tritium Bead Iron Sight
+        [0.0, -0.132, -0.25], // [3] RAIL-X9 Railgun -> Hollow 2.8x Sniper Scope Tube
+        [0.0, -0.152, -0.36], // [4] HYDRA-7 Launcher -> Top Transparent Ballistic Optic
+        [0.08, -0.18, -0.46], // [5] INFERNO-X Flamer -> Braced Thermal Hip-Aim
+        [0.0, -0.124, -0.34], // [6] ZEUS-MK7 Tesla -> Top Transparent Arc Prism Optic
+      ];
+      const [adsX, adsY, adsZ] = adsAlignByWeapon[this.player.wpnIdx] ?? [0, -0.124, -0.36];
+      const hipX = sprinting ? 0.2 : 0.235;
+      const hipY = sprinting ? -0.26 : -0.232;
+      const hipZ = -0.58;
+
+      // CoD [T] Weapon Inspect showcase curve (0..1..0) & Warzone [H] Armor Plate Lowering
+      const inspNorm = this.inspectTimer > 0 ? Math.sin((this.inspectTimer / 2.4) * Math.PI) : 0;
+      const plateDrop =
+        this.platingTimer > 0 ? Math.sin((1 - this.platingTimer / this.platingDuration) * Math.PI) * 0.24 : 0;
+      const tx = hipX + (adsX - hipX) * this.adsBlend - inspNorm * 0.14;
+      const ty = hipY + (adsY - hipY) * this.adsBlend + inspNorm * 0.055 - this.wallBlockBlend * 0.04 - plateDrop;
+      const tz = hipZ + (adsZ - hipZ) * this.adsBlend + inspNorm * 0.14 + this.wallBlockBlend * 0.16;
       const reloadProgress = isReloading
         ? 1 - this.player.reloadTimer / Math.max(0.01, this.player.reloadDur)
         : 0;
@@ -3718,33 +7833,52 @@ export class IronAshEngine {
       const equipDrop = eqCurve * 0.25;
       const equipRoll = eqCurve * 0.32;
 
-      const posDamp = damp(19);
-      const rotDamp = damp(17);
+      const posDamp = damp(20);
+      const rotDamp = damp(18);
       this.viewmodel.pivot.position.x +=
-        (tx + bobX + rPose.pivotPos.x + this.player.vmSwayX - this.viewmodel.pivot.position.x) * posDamp;
+        (tx + bobX + rPose.pivotPos.x + this.player.vmSwayX * breathScale - this.viewmodel.pivot.position.x) * posDamp;
       this.viewmodel.pivot.position.y +=
-        (ty - bobY + breathY + rPose.pivotPos.y - equipDrop - this.player.landDip * 0.45 + this.player.vmSwayY - this.viewmodel.pivot.position.y) *
+        (ty - bobY + breathY + rPose.pivotPos.y - equipDrop - this.player.landDip * 0.45 + this.player.vmSwayY * breathScale - this.viewmodel.pivot.position.y) *
         posDamp;
       this.viewmodel.pivot.position.z +=
         (tz + rPose.pivotPos.z + this.player.vmKickZ - this.viewmodel.pivot.position.z) * damp(23);
 
+      const mountCant = this.mounted && !this.player.ads ? -0.05 : this.mounted ? -0.032 : 0;
       const targetRotX = isReloading
         ? rPose.pivotRot.x
-        : this.player.vmRecoilPitch + this.player.vmKickZ * 0.55 - equipDrop * 1.45;
+        : this.player.vmRecoilPitch +
+          this.player.vmKickZ * 0.55 -
+          equipDrop * 1.45 +
+          inspNorm * 0.22 +
+          this.wallBlockBlend * 0.62;
       const targetRotY = isReloading
         ? rPose.pivotRot.y
         : sprinting && !this.player.ads
           ? 0.24
-          : this.player.vmSwayX * 1.65;
+          : this.player.vmSwayX * 1.55 * breathScale + inspNorm * 0.58;
       const targetRotZ = isReloading
         ? rPose.pivotRot.z
-        : (sprinting && !this.player.ads ? -0.14 : -strafe * 0.038) +
+        : (sprinting && !this.player.ads ? -0.14 : -strafe * 0.038 * (1 - this.adsBlend * 0.7)) +
           bobRoll +
           this.player.vmRecoilRoll -
-          equipRoll;
+          equipRoll -
+          inspNorm * 0.36 -
+          this.wallBlockBlend * 0.24 +
+          mountCant;
       this.viewmodel.pivot.rotation.x += (targetRotX - this.viewmodel.pivot.rotation.x) * rotDamp;
       this.viewmodel.pivot.rotation.y += (targetRotY - this.viewmodel.pivot.rotation.y) * rotDamp;
       this.viewmodel.pivot.rotation.z += (targetRotZ - this.viewmodel.pivot.rotation.z) * rotDamp;
+
+      // Seamlessly hand off RAIL-X9 to full-frame crystal-clear 2.8x Optical Scope Lens once fully raised
+      const fullSniperOptic = this.player.wpnIdx === 2 && this.adsBlend > 0.78 && !isReloading;
+      this.viewmodel.pivot.visible = !fullSniperOptic;
+
+      // Update live CoD Target Telemetry & 3D PEQ Tactical Laser Sight
+      this.aimProbeAccum += clampedRealDt;
+      if (this.aimProbeAccum >= 0.032) {
+        this.aimProbeAccum = 0;
+        this.updateAimTelemetryAndLaser(fullSniperOptic || isReloading || this.vatsActive);
+      }
 
       // Weapon-specific articulated magazine, support hand & mechanism reload animation
       const partDamp = damp(26);
@@ -3819,17 +7953,33 @@ export class IronAshEngine {
         Math.max(0.05, pilotPower * (0.9 + Math.sin(this.time * 24) * 0.12))
       );
 
+      const teslaPower = this.player.wpnIdx === 5 && isReloading ? rPose.auxValue : 1;
+      this.viewmodel.teslaCoilRotor.rotation.z +=
+        clampedRealDt * (2.8 + teslaPower * 7.5 + (this.player.muzzleTimer > 0 ? 18 : 0));
+      const teslaMat = this.viewmodel.teslaArcCore.material as THREE.MeshBasicMaterial;
+      teslaMat.color.setRGB(
+        0.08 + teslaPower * 0.18,
+        0.3 + teslaPower * 0.64,
+        0.45 + teslaPower * 0.55
+      );
+
       if (this.player.muzzleTimer > 0) {
         this.player.muzzleTimer -= clampedRealDt;
-        this.viewmodel.muzzleFlash.visible = true;
+        this.viewmodel.muzzleFlash.visible = !this.player.ads;
         this.viewmodel.muzzleFlash.rotation.z += 1.45;
-        this.muzzleSprite.visible = true;
+        this.muzzleSprite.visible = !this.player.ads || w.id !== 2;
         const mMat = this.muzzleSprite.material as THREE.SpriteMaterial;
         mMat.rotation = Math.random() * Math.PI * 2;
-        mMat.color.setHex(w.id === 2 ? 0x38e8ff : w.id === 4 ? 0xff7b29 : 0xffe49c);
-        const mScale = w.id === 1 ? 0.62 : w.id === 2 || w.id === 3 ? 0.56 : 0.42;
+        const flashHex =
+          w.id === 2 || w.id === 5 ? 0x38d9ff : w.id === 4 ? 0xff7b29 : 0xffd280;
+        mMat.color.setHex(flashHex);
+        this.muzzleLight.color.setHex(flashHex);
+        const adsShrink = this.player.ads ? 0.62 : 1.0;
+        const mScale = (w.id === 1 ? 0.38 : w.id === 2 || w.id === 3 || w.id === 5 ? 0.34 : 0.28) * adsShrink;
+        this.viewmodel.muzzleFlash.visible = false;
+        this.muzzleSprite.visible = true;
         this.muzzleSprite.scale.set(mScale, mScale, 1);
-        this.muzzleLight.intensity = 7.5;
+        this.muzzleLight.intensity = (w.id === 2 || w.id === 5 ? 16.0 : 12.5) * (this.player.ads ? 0.72 : 1.0);
       } else {
         this.viewmodel.muzzleFlash.visible = false;
         this.muzzleSprite.visible = false;
@@ -3846,7 +7996,7 @@ export class IronAshEngine {
         this.viewmodel.blade.visible = false;
       }
 
-      if (this.mouseLeft && !this.vatsActive && (w.auto || this.player.fireCd <= 0)) {
+      if (this.mouseLeft && !this.vatsActive && w.auto) {
         this.firePlayerWeapon();
       }
 
@@ -3865,60 +8015,78 @@ export class IronAshEngine {
       }
     }
 
-    // Director: Balanced 3-Way Robot Spawning, Artillery, Dropship & Gated Boss Titan
-    const spawnBal = computeSpawnBalance(this.wave, this.relaysDestroyed, this.coreShieldDown);
-    this.spawnCd -= dt;
-    if (this.spawnCd <= 0 && this.units.length < spawnBal.maxActiveUnits) {
-      this.spawnCd = spawnBal.spawnIntervalSec;
-      const sp = this.findSpawnPoint();
-      const roll = Math.random();
-      const spawnPair = spawnBal.batchSize >= 2 && this.units.length + 2 <= spawnBal.maxActiveUnits;
-      if (roll < 0.34) {
-        this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, sp.x, sp.z);
-        if (spawnPair) {
-          this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_BERSERKER, sp.x + 1.8, sp.z + 1.4);
+    // Free Roam Sandbox Director: Endless 3-Way Robot Waves, Artillery, Dropships & Titan Bosses.
+    // Campaign mode skips infinite wave spawning completely and runs curated Mission 01–04 setpieces!
+    const threatSt = computeThreatState(this.threatPoints);
+    if (this.gameMode === 'freeroam') {
+      const spawnBal = computeSpawnBalance(
+        this.wave,
+        this.relaysDestroyed,
+        this.coreShieldDown,
+        threatSt.level
+      );
+      this.spawnCd -= dt;
+      if (this.spawnCd <= 0 && this.units.length < spawnBal.maxActiveUnits) {
+        this.spawnCd = spawnBal.spawnIntervalSec;
+        const sp = this.findSpawnPoint();
+        const roll = Math.random();
+        const spawnPair = spawnBal.batchSize >= 2 && this.units.length + 2 <= spawnBal.maxActiveUnits;
+        if (roll < 0.34) {
+          this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, sp.x, sp.z);
+          if (spawnPair) {
+            this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_BERSERKER, sp.x + 1.8, sp.z + 1.4);
+          }
+        } else if (roll < 0.68) {
+          const useSniper = spawnBal.allowSnipers && Math.random() < 0.32;
+          this.createEnemy(
+            Faction.SYNDICATE,
+            useSniper ? UnitArchetype.SYNDICATE_SNIPER : UnitArchetype.SYNDICATE_COMMANDO,
+            sp.x,
+            sp.z
+          );
+          if (spawnPair) {
+            this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, sp.x - 1.8, sp.z + 1.4);
+          }
+        } else {
+          this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, sp.x, sp.z);
+          if (spawnPair) {
+            this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, sp.x + 1.6, sp.z - 1.6);
+          }
         }
-      } else if (roll < 0.68) {
-        this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, sp.x, sp.z);
-        if (spawnPair) {
-          this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, sp.x - 1.8, sp.z + 1.4);
-        }
-      } else {
-        this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, sp.x, sp.z);
-        if (spawnPair) {
-          this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, sp.x + 1.6, sp.z - 1.6);
-        }
+      }
+
+      this.artilleryCd -= dt;
+      if (this.artilleryCd <= 0) {
+        this.artilleryCd = Math.max(15, 25 - this.wave * 1.1 - threatSt.level * 0.9);
+        this.callArtilleryBarrage();
+      }
+
+      this.dropshipCd -= dt;
+      if (this.dropshipCd <= 0 && (!this.dropship || !this.dropship.alive)) {
+        this.dropshipCd = Math.max(24, 36 - threatSt.level * 2);
+        this.spawnDropship();
+        this.triggerRadioComms('dropship', true);
+      }
+
+      this.bossCd -= dt;
+      if (
+        spawnBal.allowTitanBoss &&
+        this.bossCd <= 0 &&
+        !this.units.some((u) => u.isBoss && u.alive)
+      ) {
+        this.bossCd = 54;
+        const sp = this.findSpawnPoint();
+        this.handleTitanDropImpact({ x: sp.x, y: 0, z: sp.z });
+        this.triggerRadioComms('bossTitan', true);
+        this.showAlert('경고: OMNI-TITAN 오버로드 전장 강하 — 외장 장갑을 파괴하고 코어를 타격하라', 5.0);
       }
     }
 
-    this.artilleryCd -= dt;
-    if (this.artilleryCd <= 0) {
-      this.artilleryCd = Math.max(16, 25 - this.wave * 1.1);
-      this.callArtilleryBarrage();
-    }
-
-    this.dropshipCd -= dt;
-    if (this.dropshipCd <= 0 && (!this.dropship || !this.dropship.alive)) {
-      this.dropshipCd = 36;
-      this.spawnDropship();
-      this.triggerRadioComms('dropship', true);
-    }
-
-    this.bossCd -= dt;
-    if (
-      spawnBal.allowTitanBoss &&
-      this.bossCd <= 0 &&
-      !this.units.some((u) => u.isBoss && u.alive)
-    ) {
-      this.bossCd = 54;
-      const sp = this.findSpawnPoint();
-      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_TITAN, sp.x, sp.z);
-      this.triggerRadioComms('bossTitan', true);
-      this.showAlert('경고: 타이탄 살육 메크 전장 진입 — 외장 장갑을 파괴하고 코어를 타격하라', 5.0);
-      this.audio.playArtilleryWhistle();
-    }
-
+    this.updateCampaignDirector(dt, clampedRealDt);
+    this.updateTank(dt, clampedRealDt);
+    this.updateSquadmates(dt);
     this.updateEnemies(dt);
+    this.updateTurretsAndSupplyDrops(dt, clampedRealDt);
     this.updateDropPods(dt);
     this.updateDropship(dt);
     this.updateHolotapes(clampedRealDt);
@@ -3934,10 +8102,12 @@ export class IronAshEngine {
     }
 
     const bgmMood: BgmMood = this.serverShutdownActive
-      ? 'dawn'
+      ? this.endingId ?? 'dawn'
       : this.coreShieldDown
         ? 'breach'
-        : 'combat';
+        : threatSt.level >= 4
+          ? 'escalation'
+          : 'combat';
     this.audio.setDynamicState({
       playing: this.phase === 'playing',
       intensity: Math.min(1, this.units.length / 13),
@@ -3945,6 +8115,102 @@ export class IronAshEngine {
       vatsActive: this.vatsActive,
       mood: bgmMood,
     });
+  }
+
+  private updateTurretsAndSupplyDrops(dt: number, realDt: number): void {
+    // 1) Allied Ghost-9 Automated Defense Turrets target & shred enemy AI robots
+    if (this.worldRefs) {
+      for (const t of this.worldRefs.turrets) {
+        t.rig.beaconRing.rotation.z += realDt * (t.hacked ? 2.4 : 0.8);
+        if (!t.hacked) continue;
+        t.fireCd = Math.max(0, t.fireCd - dt);
+        let best: ActiveUnit | null = null;
+        let bestD = 30;
+        const turEye = new THREE.Vector3(t.x, 1.85, t.z);
+        for (const u of this.units) {
+          if (!u.alive) continue;
+          const d = Math.hypot(u.x - t.x, u.z - t.z);
+          if (d < bestD && this.hasLineOfSight3D(turEye, new THREE.Vector3(u.x, u.y + 1.25 * u.scale, u.z))) {
+            bestD = d;
+            best = u;
+          }
+        }
+        if (best) {
+          const desiredYaw = Math.atan2(best.x - t.x, best.z - t.z);
+          const diff = Math.atan2(
+            Math.sin(desiredYaw - t.rig.head.rotation.y),
+            Math.cos(desiredYaw - t.rig.head.rotation.y)
+          );
+          t.rig.head.rotation.y += diff * Math.min(1, dt * 10);
+          if (t.fireCd <= 0 && Math.abs(diff) < 0.35) {
+            t.fireCd = 0.46;
+            const muzzle = new THREE.Vector3(t.x, 1.8, t.z);
+            const targetPt = new THREE.Vector3(best.x, 1.25 * best.scale, best.z);
+            const dir = targetPt.clone().sub(muzzle).normalize();
+            this.spawnTracer(muzzle, targetPt, 0x2dd4bf, 0.12, 'laser');
+            const dTur = Math.hypot(t.x - this.player.x, t.z - this.player.z);
+            this.audio.playWeapon('robot_laser', Math.max(0.09, (1 - dTur / 50) * 0.34), {
+              isIndoors: false,
+              distanceM: dTur,
+            });
+            this.damageUnit(
+              best,
+              28,
+              'torso',
+              targetPt,
+              dir,
+              -2,
+              FACTION_META[-2].name,
+              '자동 포탑 제압'
+            );
+          }
+        } else {
+          t.rig.head.rotation.y += dt * 0.7;
+        }
+      }
+    }
+
+    // 2) Valkyrie Orbital Supply Drop Pods descent & pickup
+    for (let i = this.supplyDrops.length - 1; i >= 0; i--) {
+      const sd = this.supplyDrops[i];
+      sd.life -= realDt;
+      if (!sd.landed) {
+        sd.y -= realDt * 42;
+        if (sd.y <= 0) {
+          sd.y = 0;
+          sd.landed = true;
+          this.vfx.spawnExplosion(new THREE.Vector3(sd.x, 0.5, sd.z), 7.5, true);
+          this.shake = Math.max(this.shake, 0.42);
+        }
+        sd.mesh.position.set(sd.x, sd.y, sd.z);
+      } else {
+        sd.mesh.rotation.y += realDt * 0.85;
+        if (this.phase === 'playing' && this.player.alive) {
+          const dist = Math.hypot(this.player.x - sd.x, this.player.z - sd.z);
+          if (dist < 3.4) {
+            sd.collected = true;
+            this.scene.remove(sd.mesh);
+            this.supplyDrops.splice(i, 1);
+            this.player.hp = Math.min(this.player.maxHp, this.player.hp + 45);
+            this.player.armor = Math.min(this.player.maxArmor, this.player.armor + 55);
+            this.player.grenades = Math.min(4, this.player.grenades + 1);
+            this.player.ammo[this.player.wpnIdx] = this.getEffectiveMag(this.player.wpnIdx);
+            this.armorPlates = Math.min(this.maxArmorPlates, this.armorPlates + 2);
+            this.smokeGrenades = Math.min(this.maxSmokeGrenades, this.smokeGrenades + 1);
+            this.overdriveTimer = 12.0;
+            this.audio.playHolotapePickup();
+            this.empFlashSeq++;
+            this.showCallout('발키리 보급 확보 · +45 HP · +55 ARMOR · 12초 화력 오버드라이브!', '#34d399', 2.8);
+            this.emitHudSnapshot(true);
+            continue;
+          }
+        }
+      }
+      if (sd.life <= 0) {
+        this.scene.remove(sd.mesh);
+        this.supplyDrops.splice(i, 1);
+      }
+    }
   }
 
   private updateDropPods(dt: number): void {
@@ -4059,39 +8325,55 @@ export class IronAshEngine {
       if (hitW.length > 0 || hitE.length > 0 || r.life <= 0) {
         this.scene.remove(r.mesh);
         this.rockets.splice(i, 1);
-        this.triggerExplosion(r.pos, 10.5, 205, Faction.PLAYER, 'HYDRA-7 로켓', {
+        const rDmg = Math.round(WEAPONS[3].dmg * this.getDamageBoostMultiplier());
+        this.triggerExplosion(r.pos, 10.5, rDmg, Faction.PLAYER, 'HYDRA-7 로켓', {
           tag: '로켓 직격 랙돌',
         });
       }
     }
 
-    // Flamethrower napalm puffs
+    // Flamethrower napalm puffs (wall-occluded so fire cannot burn through solid bunkers!)
     for (let i = this.flames.length - 1; i >= 0; i--) {
       const fl = this.flames[i];
       fl.life -= dt;
+      const prevFlame = fl.pos.clone();
       fl.pos.addScaledVector(fl.vel, dt);
       fl.vel.y += 2.2 * dt;
+      const fStep = fl.pos.distanceTo(prevFlame);
+      if (fStep > 0.01) {
+        this.raycaster.set(prevFlame, this._v1.copy(fl.pos).sub(prevFlame).normalize());
+        this.raycaster.far = fStep + 0.18;
+        if (this.raycaster.intersectObjects(this.worldHitMeshes, false).length > 0) {
+          fl.life = 0;
+        }
+      }
       fl.mesh.position.copy(fl.pos);
       const pr = 1 - fl.life / fl.maxLife;
       fl.mesh.scale.setScalar(0.28 + pr * 0.95);
 
-      for (const u of this.units) {
-        if (!u.alive) continue;
-        if (Math.hypot(u.x - fl.pos.x, u.z - fl.pos.z) < u.r + 0.9 && Math.abs(fl.pos.y - 1.1 * u.scale) < 1.3 * u.scale) {
-          u.burnTimer = Math.max(u.burnTimer, 3.6);
-          if (u.isRobot) u.staggerTimer = Math.max(u.staggerTimer, 0.35);
-          this.damageUnit(
-            u,
-            7,
-            'torso',
-            fl.pos.clone(),
-            fl.vel.clone().normalize(),
-            Faction.PLAYER,
-            FACTION_META[Faction.PLAYER].name,
-            u.isRobot ? '과열 합선' : '네이팜 화염'
-          );
-          fl.life = 0;
-          break;
+      if (fl.life > 0) {
+        for (const u of this.units) {
+          if (!u.alive) continue;
+          if (
+            Math.hypot(u.x - fl.pos.x, u.z - fl.pos.z) < u.r + 0.9 &&
+            Math.abs(fl.pos.y - (u.y + 1.1 * u.scale)) < 1.3 * u.scale
+          ) {
+            u.burnTimer = Math.max(u.burnTimer, 3.6);
+            if (u.isRobot && !u.isBoss) u.staggerTimer = Math.max(u.staggerTimer, 0.28);
+            const flDmg = Math.round(8 * this.getDamageBoostMultiplier());
+            this.damageUnit(
+              u,
+              flDmg,
+              'torso',
+              fl.pos.clone(),
+              fl.vel.clone().normalize(),
+              Faction.PLAYER,
+              FACTION_META[Faction.PLAYER].name,
+              u.isRobot ? '과열 합선' : '네이팜 화염'
+            );
+            fl.life = 0;
+            break;
+          }
         }
       }
 
@@ -4101,16 +8383,30 @@ export class IronAshEngine {
       }
     }
 
-    // Frag / EMP Grenades
+    // Frag / EMP Grenades (full horizontal wall ricochet + floor bounce!)
     for (let i = this.grenades.length - 1; i >= 0; i--) {
       const g = this.grenades[i];
       g.fuse -= dt;
       g.vy -= 24 * dt;
+      const prevX = g.pos.x;
+      const prevZ = g.pos.z;
       g.pos.x += g.vx * dt;
       g.pos.y += g.vy * dt;
       g.pos.z += g.vz * dt;
-      if (g.pos.y < 0.16) {
-        g.pos.y = 0.16;
+      // Reflect cleanly off horizontal solid colliders
+      const probe = { x: g.pos.x, z: g.pos.z };
+      resolveXZCollision(probe, 0.22, this.colliders, ARENA_HALF_SIZE, Math.max(0, g.pos.y));
+      if (Math.abs(probe.x - g.pos.x) > 0.005) {
+        g.pos.x = prevX;
+        g.vx = -g.vx * 0.52;
+      }
+      if (Math.abs(probe.z - g.pos.z) > 0.005) {
+        g.pos.z = prevZ;
+        g.vz = -g.vz * 0.52;
+      }
+      const nadeFloorY = this.getFloorHeightAt(g.pos.x, g.pos.z, Math.max(0, g.pos.y));
+      if (g.pos.y < nadeFloorY + 0.16) {
+        g.pos.y = nadeFloorY + 0.16;
         g.vy = -g.vy * 0.45;
         g.vx *= 0.72;
         g.vz *= 0.72;
@@ -4200,7 +8496,7 @@ export class IronAshEngine {
       }
     }
 
-    // Brass shell casings
+    // Physical Brass Shell Casings with multi-level floor bounce & tactile metallic clink SFX
     for (let i = this.shells.length - 1; i >= 0; i--) {
       const sh = this.shells[i];
       sh.life -= dt;
@@ -4209,17 +8505,36 @@ export class IronAshEngine {
         this.shells.splice(i, 1);
         continue;
       }
-      sh.vy -= 20 * dt;
+      sh.vy -= 21 * dt;
       sh.mesh.position.x += sh.vx * dt;
       sh.mesh.position.y += sh.vy * dt;
       sh.mesh.position.z += sh.vz * dt;
       sh.mesh.rotation.x += sh.rx * dt;
       sh.mesh.rotation.y += sh.ry * dt;
-      if (sh.mesh.position.y < 0.03) {
-        sh.mesh.position.y = 0.03;
-        sh.vy = -sh.vy * 0.35;
-        sh.vx *= 0.5;
-        sh.vz *= 0.5;
+      const shellFloorY = this.getFloorHeightAt(
+        sh.mesh.position.x,
+        sh.mesh.position.z,
+        Math.max(0, sh.mesh.position.y)
+      );
+      if (sh.mesh.position.y <= shellFloorY + 0.028) {
+        sh.mesh.position.y = shellFloorY + 0.028;
+        if (Math.abs(sh.vy) > 0.75) {
+          sh.vy = Math.abs(sh.vy) * 0.42;
+          sh.vx *= 0.58;
+          sh.vz *= 0.58;
+          sh.rx *= 0.55;
+          sh.ry *= 0.55;
+          if (sh.bounces < 2) {
+            this.audio.playShellClink(sh.bounces === 0 ? 1.0 : 0.48);
+          }
+          sh.bounces++;
+        } else {
+          sh.vy = 0;
+          sh.vx *= 0.75;
+          sh.vz *= 0.75;
+          sh.rx = 0;
+          sh.ry = 0;
+        }
       }
     }
 
@@ -4302,15 +8617,130 @@ export class IronAshEngine {
     this.blastLight.intensity *= Math.pow(0.002, realDt);
   }
 
+  private getFloorHeightAt(x: number, z: number, currentFeetY: number): number {
+    let bestY = 0;
+    const surfaces = this.worldRefs?.walkableSurfaces;
+    if (!surfaces) return 0;
+    for (let i = 0; i < surfaces.length; i++) {
+      const s = surfaces[i];
+      if (x >= s.minX && x <= s.maxX && z >= s.minZ && z <= s.maxZ) {
+        let sy = s.yStart;
+        if (s.slopeAxis === 'z') {
+          const t = Math.max(0, Math.min(1, (z - s.minZ) / Math.max(0.01, s.maxZ - s.minZ)));
+          sy = s.yStart + (s.yEnd - s.yStart) * t;
+        } else if (s.slopeAxis === 'x') {
+          const t = Math.max(0, Math.min(1, (x - s.minX) / Math.max(0.01, s.maxX - s.minX)));
+          sy = s.yStart + (s.yEnd - s.yStart) * t;
+        }
+        if (sy <= currentFeetY + 1.15 && sy > bestY) {
+          bestY = sy;
+        }
+      }
+    }
+    return bestY;
+  }
+
+  /** Classifies floor acoustic material for real recording-based footsteps */
+  private getFootstepSurfaceAt(x: number, z: number, floorY: number): FootstepSurface {
+    // 1) Steel decks: ROK Navy LCAC-655 hovercraft deck, OMNI-CORE exterior lift, collapsed overpass ramps
+    if (
+      z >= 35.5 ||
+      (this.gameMode === 'campaign' && this.missionStage === 'm4_elevator_breach') ||
+      (floorY > 0.15 && floorY < 3.0)
+    ) {
+      return 'metal';
+    }
+    // 2) Shattered storefront glass & indoor concrete debris: 2F Euljiro balconies, breached command room, subway shelter
+    if (
+      floorY >= 3.0 ||
+      this.isIndoors ||
+      (x >= 11.5 && z >= -1.0 && z <= 10.5) ||
+      (z >= 25.0 && z <= 33.5 && Math.abs(x) <= 12.5)
+    ) {
+      return 'glass';
+    }
+    // 3) Rain-slicked Neo-Seoul urban asphalt boulevards & plazas
+    return 'asphalt';
+  }
+
+  private getDamageBoostMultiplier(): number {
+    const styleMult = computeStyleRank(this.comboCount, this.styleScore).damageMult;
+    const att = getWeaponAttachmentSpec(this.weaponAttachment);
+    return styleMult * att.damageMult * (this.overdriveTimer > 0 ? 1.4 : 1.0);
+  }
+
+  private updateEyeAdaptation(dt: number): void {
+    let indoors = false;
+    const zones = this.worldRefs?.indoorZones;
+    if (zones && this.phase === 'playing') {
+      const cx = this.camera.position.x;
+      const cy = this.camera.position.y;
+      const cz = this.camera.position.z;
+      for (let i = 0; i < zones.length; i++) {
+        const z = zones[i];
+        if (cx >= z.minX && cx <= z.maxX && cz >= z.minZ && cz <= z.maxZ && cy <= z.maxY) {
+          indoors = true;
+          break;
+        }
+      }
+    }
+    if (indoors !== this.prevIndoors) {
+      this.exposureAdaptationPulse = indoors ? -0.07 : 0.08;
+      this.prevIndoors = indoors;
+    }
+    this.isIndoors = indoors;
+    this.exposureAdaptationPulse *= Math.exp(-3.4 * dt);
+    const targetExp = (indoors ? 0.96 : 1.02) + this.exposureAdaptationPulse;
+    this.currentExposure += (targetExp - this.currentExposure) * Math.min(1, dt * 3.2);
+    this.renderer.toneMappingExposure = Math.max(0.86, Math.min(1.12, this.currentExposure));
+  }
+
   private updateAtmosphere(dt: number): void {
     const nowSec = performance.now() * 0.001;
     const dawnP = this.cinematic.getDawnProgress();
 
-    // Flickering firelights (dim gradually during Dawn peace)
+    // Update towering black oil smoke columns, street steam curtains & indoor/outdoor Eye Adaptation
+    if (this.worldRefs) {
+      this.vfx.updateAmbientPlumes(this.worldRefs.smokePlumes, dt, this.quality);
+    }
+    this.updateEyeAdaptation(dt);
+
+    // Pillar 3: Dynamic Overhead Helicopter Rotor Loop & Supersonic Fighter Jet Low-Altitude Doppler Flyby
+    if (this.phase === 'playing') {
+      let heliLevel = 0.16;
+      if (this.isHeliRideActive()) {
+        heliLevel = 0.98;
+      } else if (this.dropship && this.dropship.alive) {
+        heliLevel = 0.88;
+      } else if (this.gameMode === 'campaign' && this.missionStage === 'm1_landing') {
+        heliLevel = 0.8;
+      } else if (this.worldRefs?.rescueShuttle.visible) {
+        heliLevel = 0.65;
+      } else if (this.gameMode === 'campaign' && this.missionStage === 'm3_ac130_flir') {
+        heliLevel = 0.5;
+      } else if (this.isIndoors) {
+        heliLevel = 0.06;
+      }
+      this.audio.setHeliPresence(heliLevel);
+
+      if (dawnP < 0.08 && !this.cinematic.isCutsceneActive()) {
+        this.jetFlybyCd -= dt;
+        if (this.jetFlybyCd <= 0) {
+          this.jetFlybyCd = 24 + Math.random() * 18;
+          this.audio.playJetFlyby(this.isIndoors ? 0.34 : 0.68);
+          this.shake = Math.max(this.shake, this.isIndoors ? 0.035 : 0.085);
+        }
+      }
+    } else {
+      this.audio.setHeliPresence(0);
+      this.audio.setTankEnginePresence(false, 0);
+    }
+
+    // Flickering burning APC & debris firelights (physically calibrated for r187 decay=1.4!)
     const fireFade = Math.max(0.15, 1 - dawnP * 0.8);
     for (const fl of this.fireLights) {
       fl.light.intensity =
-        (2.0 + Math.sin(nowSec * 14 + fl.phase) * 0.55 + Math.random() * 0.3) * fireFade;
+        (16.0 + Math.sin(nowSec * 14 + fl.phase) * 3.8 + Math.random() * 2.2) * fireFade;
     }
 
     // Sweeping giant searchlights
@@ -4331,7 +8761,7 @@ export class IronAshEngine {
       }
       if (this.lightningFlash > 0) {
         this.lightningFlash -= dt;
-        this.lightningLight.intensity = Math.random() > 0.35 ? 2.6 : 0.4;
+        this.lightningLight.intensity = Math.random() > 0.35 ? 1.05 : 0.22;
       } else {
         this.lightningLight.intensity = 0;
       }
@@ -4339,28 +8769,80 @@ export class IronAshEngine {
       this.lightningLight.intensity = 0;
     }
 
-    // Smooth atmospheric sky/fog/light morph:
-    // Base storm -> Relay-1 crimson tension -> Dawn clear azure blue & golden sunrise (5s)
+    // Smooth atmospheric sky/fog/light morph for ALL 3 Branching Endings:
+    // Dawn (Golden Sunrise) | Symbiosis (Emerald-Cyan Aurora) | Ascension (Crimson-Gold Sovereign Storm)
     const fog = this.scene.fog as THREE.FogExp2;
+    const endTheme = this.cinematic.getEndingTheme();
     if (dawnP > 0.001) {
-      this._c1.setHex(0x1f0d12).lerp(this._c2.setHex(0xdcb486), dawnP);
-      fog.color.copy(this._c1);
-      fog.density = 0.0102 * (1 - dawnP * 0.52);
-      (this.scene.background as THREE.Color).setHex(0x0c0e17).lerp(this._c2.setHex(0x5a9be0), dawnP);
+      if (endTheme === 'symbiosis') {
+        this._c1.setHex(0x1f0d12).lerp(this._c2.setHex(0x1b4d5c), dawnP);
+        fog.color.copy(this._c1);
+        fog.density = 0.0102 * (1 - dawnP * 0.45);
+        (this.scene.background as THREE.Color).setHex(0x0c0e17).lerp(this._c2.setHex(0x0d2b3e), dawnP);
+        this.hemiLight.color.setHex(0x88b4e6).lerp(this._c2.setHex(0x7efce0), dawnP);
+        this.hemiLight.groundColor.setHex(0x381e18).lerp(this._c2.setHex(0x1f5963), dawnP);
+        this.hemiLight.intensity = 0.88 + dawnP * 0.52;
+        this.sunLight.color.setHex(0xffb884).lerp(this._c2.setHex(0x9fffe8), dawnP);
+        this.sunLight.intensity = 1.42 + dawnP * 0.55;
+        if (this.worldRefs) {
+          const u = this.worldRefs.skyDomeMat.uniforms;
+          u.topColor.value.setHex(0x060913).lerp(this._c2.setHex(0x09243d), dawnP);
+          u.midColor.value.setHex(0x16101e).lerp(this._c2.setHex(0x178b82), dawnP);
+          u.horizonColor.value.setHex(0x471b18).lerp(this._c2.setHex(0x52f2c8), dawnP);
+          u.glowColor.value.setHex(0x9e2124).lerp(this._c2.setHex(0x7efce0), dawnP);
+        }
+      } else if (endTheme === 'ascension') {
+        this._c1.setHex(0x1f0d12).lerp(this._c2.setHex(0x2e0b10), dawnP);
+        fog.color.copy(this._c1);
+        fog.density = 0.0102 * (1 - dawnP * 0.22);
+        (this.scene.background as THREE.Color).setHex(0x0c0e17).lerp(this._c2.setHex(0x1a0608), dawnP);
+        this.hemiLight.color.setHex(0x88b4e6).lerp(this._c2.setHex(0xff9b54), dawnP);
+        this.hemiLight.groundColor.setHex(0x381e18).lerp(this._c2.setHex(0x4d1014), dawnP);
+        this.hemiLight.intensity = 0.88 + dawnP * 0.45;
+        this.sunLight.color.setHex(0xffb884).lerp(this._c2.setHex(0xff5a36), dawnP);
+        this.sunLight.intensity = 1.42 + dawnP * 0.62;
+        if (this.worldRefs) {
+          const u = this.worldRefs.skyDomeMat.uniforms;
+          u.topColor.value.setHex(0x060913).lerp(this._c2.setHex(0x140407), dawnP);
+          u.midColor.value.setHex(0x16101e).lerp(this._c2.setHex(0x4a0f14), dawnP);
+          u.horizonColor.value.setHex(0x471b18).lerp(this._c2.setHex(0xff5e1a), dawnP);
+          u.glowColor.value.setHex(0x9e2124).lerp(this._c2.setHex(0xffc145), dawnP);
+        }
+        this.ascensionArcCd -= dt;
+        if (this.ascensionArcCd <= 0 && this.worldRefs) {
+          this.ascensionArcCd = 0.65;
+          const cit = this.worldRefs.citadel;
+          this.vfx.spawnLightningArc(
+            new THREE.Vector3(cit.x, 22, cit.z),
+            new THREE.Vector3(
+              cit.x + (Math.random() - 0.5) * 44,
+              52,
+              cit.z + (Math.random() - 0.5) * 24
+            ),
+            Math.random() > 0.5 ? 0xff4422 : 0xf5b342,
+            0.5
+          );
+        }
+      } else {
+        this._c1.setHex(0x1f0d12).lerp(this._c2.setHex(0xdcb486), dawnP);
+        fog.color.copy(this._c1);
+        fog.density = 0.0102 * (1 - dawnP * 0.52);
+        (this.scene.background as THREE.Color).setHex(0x0c0e17).lerp(this._c2.setHex(0x5a9be0), dawnP);
 
-      this.hemiLight.color.setHex(0x88b4e6).lerp(this._c2.setHex(0xbde2ff), dawnP);
-      this.hemiLight.groundColor.setHex(0x381e18).lerp(this._c2.setHex(0xd99b66), dawnP);
-      this.hemiLight.intensity = 1.08 + dawnP * 0.85;
+        this.hemiLight.color.setHex(0x88b4e6).lerp(this._c2.setHex(0xbde2ff), dawnP);
+        this.hemiLight.groundColor.setHex(0x381e18).lerp(this._c2.setHex(0xd99b66), dawnP);
+        this.hemiLight.intensity = 0.88 + dawnP * 0.48;
 
-      this.sunLight.color.setHex(0xffb884).lerp(this._c2.setHex(0xffe6b3), dawnP);
-      this.sunLight.intensity = 1.75 + dawnP * 1.15;
+        this.sunLight.color.setHex(0xffb884).lerp(this._c2.setHex(0xffe0a6), dawnP);
+        this.sunLight.intensity = 1.42 + dawnP * 0.65;
 
-      if (this.worldRefs) {
-        const u = this.worldRefs.skyDomeMat.uniforms;
-        u.topColor.value.setHex(0x060913).lerp(this._c2.setHex(0x286cc2), dawnP);
-        u.midColor.value.setHex(0x16101e).lerp(this._c2.setHex(0x74b3e8), dawnP);
-        u.horizonColor.value.setHex(0x471b18).lerp(this._c2.setHex(0xffc97d), dawnP);
-        u.glowColor.value.setHex(0x9e2124).lerp(this._c2.setHex(0xffe9a8), dawnP);
+        if (this.worldRefs) {
+          const u = this.worldRefs.skyDomeMat.uniforms;
+          u.topColor.value.setHex(0x060913).lerp(this._c2.setHex(0x286cc2), dawnP);
+          u.midColor.value.setHex(0x16101e).lerp(this._c2.setHex(0x74b3e8), dawnP);
+          u.horizonColor.value.setHex(0x471b18).lerp(this._c2.setHex(0xffc97d), dawnP);
+          u.glowColor.value.setHex(0x9e2124).lerp(this._c2.setHex(0xffe9a8), dawnP);
+        }
       }
     } else if (this.relay1FogShift > 0) {
       // Shift slightly deeper crimson-rust after Relay 1 falls
@@ -4410,8 +8892,24 @@ export class IronAshEngine {
       this.rainLines.geometry.attributes.position.needsUpdate = true;
     }
 
-    // Animate OMNI-CORE Citadel gyro rings, Exposed Orange Core, Relay Pylon crystals & fans
+    // Animate OMNI-CORE Citadel gyro rings, Exposed Orange Core, Relay Pylon crystals, shaders & fans
     if (this.worldRefs) {
+      const skyU = this.worldRefs.skyDomeMat.uniforms;
+      skyU.uTime.value = nowSec;
+      skyU.uAuroraStrength.value = endTheme === 'symbiosis' ? dawnP : 0;
+      skyU.uSunGlow.value = endTheme === 'dawn' ? dawnP : 0;
+      this.worldRefs.shieldDomeMat.uniforms.uTime.value = nowSec;
+
+      // Drifting low-lying street volumetric mist
+      if (this.worldRefs.groundMist.visible) {
+        const mp = this.worldRefs.groundMist.geometry.attributes.position.array as Float32Array;
+        for (let i = 0; i < mp.length / 3; i++) {
+          mp[i * 3] += Math.sin(nowSec * 0.25 + i * 0.9) * dt * 0.35;
+          mp[i * 3 + 2] += Math.cos(nowSec * 0.2 + i * 0.7) * dt * 0.28;
+        }
+        this.worldRefs.groundMist.geometry.attributes.position.needsUpdate = true;
+      }
+
       for (const fan of this.worldRefs.spinningFans) {
         fan.rotation.y += dt * (this.serverShutdownActive ? 0.25 : 3.8);
       }
@@ -4433,6 +8931,94 @@ export class IronAshEngine {
         r.coreCrystal.position.y = 5.6 + Math.sin(nowSec * 3.4 + r.id) * 0.22;
         r.ringMesh.rotation.z += dt * 1.8;
       }
+
+      // Animate Living Cyberpunk Megacity Aerial Patrol Traffic
+      for (const tr of this.worldRefs.skyTraffic) {
+        tr.angle += dt * tr.speed;
+        const nx = Math.cos(tr.angle) * tr.orbitRadius;
+        const nz = Math.sin(tr.angle) * tr.orbitRadius;
+        const ny = tr.height + Math.sin(nowSec * 1.2 + tr.orbitRadius) * 1.1;
+        tr.mesh.position.set(nx, ny, nz);
+        const tangentX = -Math.sin(tr.angle) * tr.dir;
+        const tangentZ = Math.cos(tr.angle) * tr.dir;
+        tr.mesh.rotation.y = Math.atan2(tangentX, tangentZ);
+      }
+
+      // Animate Cyberpunk Holographic Billboards (subtle flicker & threat-reactive pulse)
+      for (const hb of this.worldRefs.holoBillboards) {
+        const flicker = Math.sin(nowSec * 3.2 + hb.phase) * 0.06;
+        const glitchDrop =
+          this.lastThreatLevel >= 4 && Math.sin(nowSec * 29 + hb.phase) > 0.94 ? 0.35 : 0;
+        hb.mat.opacity = Math.max(0.18, hb.baseOpacity + flicker - glitchDrop);
+        if (endTheme === 'dawn' && dawnP > 0.3) {
+          hb.mat.opacity *= Math.max(0, 1 - dawnP * 1.1);
+        }
+      }
+
+      // Volumetric Dawn / Aurora God-Ray Shafts fade in during Dawn or Symbiosis endings
+      if (endTheme === 'dawn' || endTheme === 'symbiosis') {
+        for (const gr of this.worldRefs.dawnGodRays) {
+          gr.visible = dawnP > 0.05;
+          (gr.material as THREE.MeshBasicMaterial).opacity = Math.min(0.11, dawnP * 0.12);
+        }
+      }
+
+      // Choreograph Valkyrie UNS Arclight Rescue Shuttle during Opening Flyby & Ending Descent
+      const shuttle = this.worldRefs.rescueShuttle;
+      const activeSeq = this.cinematic.getSequence();
+      if (activeSeq === 'opening') {
+        const opT = this.cinematic.getHudState().elapsed;
+        if (opT > 2.4 && opT < 5.8) {
+          shuttle.visible = true;
+          const p = (opT - 2.4) / 3.4;
+          shuttle.position.set(-48 + p * 98, 22 - Math.sin(p * Math.PI) * 5, -14 + p * 8);
+          shuttle.rotation.set(0.05, Math.PI / 2 - 0.1, -0.14);
+        } else {
+          shuttle.visible = false;
+        }
+      } else if (activeSeq === 'dawn' || activeSeq === 'symbiosis') {
+        shuttle.visible = true;
+        const targetX = activeSeq === 'dawn' ? -8 : 10;
+        const targetY = 23 + Math.sin(nowSec * 1.6) * 0.8;
+        const targetZ = -20;
+        shuttle.position.x += (targetX - shuttle.position.x) * Math.min(1, dt * 0.95);
+        shuttle.position.y += (targetY - shuttle.position.y) * Math.min(1, dt * 0.8);
+        shuttle.position.z += (targetZ - shuttle.position.z) * Math.min(1, dt * 0.95);
+        shuttle.lookAt(0, 14, -35);
+      } else if (!this.serverShutdownActive) {
+        shuttle.visible = false;
+      }
+    }
+
+    // Dynamic AAA Film-Grading & AC-130 FLIR Thermal Post-Process Uniforms
+    if (this.gradePass) {
+      const gu = this.gradePass.uniforms;
+      gu.uTime.value = nowSec;
+      gu.uFlirMode.value = this.isAc130Active()
+        ? this.ac130ThermalMode === 'whot'
+          ? 1.0
+          : 2.0
+        : 0.0;
+      const actionPulse =
+        (this.player.dashTimer > 0 ? 0.0042 : 0) +
+        (this.player.slideTimer > 0 ? 0.0022 : 0) +
+        (this.adrenalineTimer > 0 ? 0.0036 : 0) +
+        Math.min(0.0045, this.shake * 0.0055);
+      const targetChrom = 0.00065 + actionPulse;
+      gu.uChromatic.value += (targetChrom - gu.uChromatic.value) * Math.min(1, dt * 12);
+      gu.uVignette.value = this.player.ads ? 0.36 : this.vatsActive ? 0.42 : 0.27;
+      const tint = gu.uTint.value as THREE.Vector3;
+      if (dawnP > 0.05 && endTheme === 'dawn') {
+        tint.set(1.04, 1.01, 0.94);
+      } else if (dawnP > 0.05 && endTheme === 'symbiosis') {
+        tint.set(0.94, 1.05, 1.03);
+      } else if (dawnP > 0.05 && endTheme === 'ascension') {
+        tint.set(1.08, 0.94, 0.92);
+      } else if (this.vatsActive) {
+        tint.set(0.93, 1.05, 0.97);
+      } else {
+        tint.set(1.0, 1.0, 1.0);
+      }
     }
   }
 
@@ -4447,15 +9033,17 @@ export class IronAshEngine {
       this.viewmodel.pivot.visible = true;
       this.updateSimulation(rawDt);
     } else if (this.phase === 'title') {
-      // Live 3D flyover camera showcasing the Cyberpunk Server Labyrinth & OMNI-CORE Citadel
+      // Cinematic hero orbital glide showcasing OMNI-CORE Citadel, wet neon conduits, billboards & aerial traffic
       this.viewmodel.pivot.visible = false;
-      const t = now * 0.00018;
+      this.laserBeam.visible = false;
+      this.laserDot.visible = false;
+      const t = now * 0.00016;
       this.camera.position.set(
-        Math.cos(t) * 29,
-        13.5 + Math.sin(t * 2) * 1.5,
-        Math.sin(t) * 28 + 6
+        Math.sin(t) * 26,
+        11.2 + Math.sin(t * 1.7) * 3.2,
+        18 + Math.cos(t * 0.85) * 14
       );
-      this.camera.lookAt(0, 7.5, -20);
+      this.camera.lookAt(Math.sin(t * 0.5) * 4, 10.5, -28);
       this.updateAtmosphere(Math.min(rawDt, 0.05));
     } else {
       this.viewmodel.pivot.visible = true;
@@ -4603,13 +9191,17 @@ export class IronAshEngine {
         if (dist < 3.4) {
           ht.collected = true;
           ht.group.visible = false;
+          this.unlockedHolotapeIds.add(ht.data.id);
           this.analytics.holotapesFound++;
           this.audio.playHolotapePickup();
 
           // Meaningful wasteland reward per Holotape
           this.player.armor = Math.min(this.player.maxArmor, this.player.armor + 25);
-          this.player.hp = Math.min(this.player.maxHp, this.player.hp + 15);
+          this.player.hp = Math.min(this.player.maxHp, this.player.hp + 18);
           this.vatsEnergy = Math.min(100, this.vatsEnergy + 30);
+          if (ht.data.id === 'ht-05') {
+            this.supplyDropCd = 0;
+          }
           if (i % 2 === 1) {
             this.player.grenades = Math.min(4, this.player.grenades + 1);
           }
@@ -4832,6 +9424,39 @@ export class IronAshEngine {
         });
       }
 
+      for (const t of this.worldRefs.turrets) {
+        const dx = t.x - this.player.x;
+        const dz = t.z - this.player.z;
+        const dist = Math.hypot(dx, dz);
+        const fwdDot = dx * fx + dz * fz;
+        const rightDot = dx * rx + dz * rz;
+        contacts.push({
+          id: 9700 + t.id,
+          relativeDeg: Math.round((Math.atan2(rightDot, fwdDot) * 180) / Math.PI),
+          distance: Math.round(dist),
+          faction: Faction.PLAYER,
+          isBoss: false,
+          isTurret: true,
+        });
+      }
+
+      for (let i = 0; i < this.supplyDrops.length; i++) {
+        const sd = this.supplyDrops[i];
+        const dx = sd.x - this.player.x;
+        const dz = sd.z - this.player.z;
+        const dist = Math.hypot(dx, dz);
+        const fwdDot = dx * fx + dz * fz;
+        const rightDot = dx * rx + dz * rz;
+        contacts.push({
+          id: 9800 + i,
+          relativeDeg: Math.round((Math.atan2(rightDot, fwdDot) * 180) / Math.PI),
+          distance: Math.round(dist),
+          faction: Faction.PLAYER,
+          isBoss: false,
+          isSupply: true,
+        });
+      }
+
       // Add OMNI-CORE Central AI Server Beacon to compass
       const cit = this.worldRefs.citadel;
       const cdx = cit.terminalX - this.player.x;
@@ -4859,6 +9484,191 @@ export class IronAshEngine {
     return contacts.slice(0, 14);
   }
 
+  private updateAimTelemetryAndLaser(suppressLaser: boolean): void {
+    const origin = this.camera.position;
+    const dir = this._v1;
+    this.camera.getWorldDirection(dir);
+
+    this.raycaster.set(origin, dir);
+    this.raycaster.far = 140;
+
+    const worldHits = this.raycaster.intersectObjects(this.worldHitMeshes, false);
+    const enemyHits = this.raycaster.intersectObjects(this.enemyHitMeshes, false);
+    const wHit = worldHits[0];
+    const eHit = enemyHits[0];
+
+    let hitDist = 90;
+    let hitPoint = this._v2.copy(origin).addScaledVector(dir, hitDist);
+    let nextTarget: AimTargetTelemetry | null = null;
+
+    if (eHit && (!wHit || eHit.distance <= wHit.distance)) {
+      hitDist = eHit.distance;
+      hitPoint.copy(eHit.point);
+      const u = eHit.object.userData?.unit as ActiveUnit | undefined;
+      const part = eHit.object.userData?.part as BodyPart | undefined;
+      if (u && u.alive) {
+        const fMeta = FACTION_META[u.faction] ?? FACTION_META[Faction.ROBOT];
+        nextTarget = {
+          name: u.name,
+          roleTag: u.isBoss ? `BOSS · PHASE ${u.bossPhase}` : fMeta.name,
+          hpPct: Math.max(0, Math.round((u.hp / Math.max(1, u.maxHp)) * 100)),
+          distanceM: Math.round(hitDist * 10) / 10,
+          accentCss: u.isBoss ? '#ff4422' : fMeta.cssColor,
+          isBoss: u.isBoss,
+          weakpointHint:
+            part === 'head'
+              ? 'HEAD 2.5x'
+              : part === 'core'
+                ? 'CORE 2.2x'
+                : part === 'leftArm' || part === 'rightArm'
+                  ? 'ARM DISMEMBER'
+                  : undefined,
+        };
+      }
+    } else if (wHit) {
+      hitDist = wHit.distance;
+      hitPoint.copy(wHit.point);
+      const ud = wHit.object.userData;
+      if (ud?.relay && (ud.relay as RelayPylonEntity).alive) {
+        const rel = ud.relay as RelayPylonEntity;
+        nextTarget = {
+          name: rel.label,
+          roleTag: 'FIREWALL RELAY',
+          hpPct: Math.max(0, Math.round((rel.hp / Math.max(1, rel.maxHp)) * 100)),
+          distanceM: Math.round(hitDist * 10) / 10,
+          accentCss: '#ff4422',
+          isBoss: false,
+          weakpointHint: 'DESTRUCTIBLE',
+        };
+      } else if (ud?.isServerCore && this.coreShieldDown) {
+        nextTarget = {
+          name: 'OMNI-CORE 중앙 메인프레임',
+          roleTag: 'PRIMARY TARGET',
+          hpPct: Math.max(0, Math.round((this.coreHp / Math.max(1, this.coreMaxHp)) * 100)),
+          distanceM: Math.round(hitDist * 10) / 10,
+          accentCss: '#38d9ff',
+          isBoss: true,
+          weakpointHint: 'SHIELD DOWN',
+        };
+      }
+    }
+
+    this.aimDistanceM = Math.round(hitDist * 10) / 10;
+    this.aimTarget = nextTarget;
+
+    // 3D PEQ Tactical Laser Sight on Rifle [0], Railgun [2] & Tesla [5]
+    const wId = this.player.wpnIdx;
+    const laserEnabled =
+      !suppressLaser &&
+      !this.cinematic.isCutsceneActive() &&
+      this.player.alive &&
+      (wId === 0 || wId === 2 || wId === 5) &&
+      this.inspectTimer <= 0;
+
+    if (!laserEnabled) {
+      this.laserBeam.visible = false;
+      this.laserDot.visible = false;
+      return;
+    }
+
+    const laserHex = wId === 0 ? 0xff3b3b : 0x38d9ff;
+    (this.laserBeam.material as THREE.LineBasicMaterial).color.setHex(laserHex);
+    (this.laserBeam.material as THREE.LineBasicMaterial).opacity = this.player.ads ? 0.24 : 0.34;
+    (this.laserDot.material as THREE.MeshBasicMaterial).color.setHex(laserHex);
+
+    // Emit beam cleanly from weapon's side PEQ laser module in world space
+    const startLocal = this._v3.set(0.056, 0.016, -0.5);
+    this.viewmodel.pivot.localToWorld(startLocal);
+    const posAttr = this.laserBeam.geometry.attributes.position as THREE.BufferAttribute;
+    posAttr.setXYZ(0, startLocal.x, startLocal.y, startLocal.z);
+    posAttr.setXYZ(1, hitPoint.x, hitPoint.y, hitPoint.z);
+    posAttr.needsUpdate = true;
+
+    this.laserBeam.visible = true;
+    const showDot = hitDist < 85;
+    this.laserDot.visible = showDot;
+    if (showDot) {
+      this.laserDot.position.copy(hitPoint).addScaledVector(dir, -0.06);
+      const dotScale = Math.max(0.55, Math.min(2.2, hitDist * 0.045));
+      this.laserDot.scale.setScalar(dotScale);
+    }
+  }
+
+  private projectWorldWaypoints(): WorldWaypointMarker[] {
+    if (
+      this.phase !== 'playing' ||
+      this.cinematic.isCutsceneActive() ||
+      !this.worldRefs
+    ) {
+      return [];
+    }
+    const w = this.container.clientWidth || window.innerWidth;
+    const h = this.container.clientHeight || window.innerHeight;
+    const cx = w * 0.5;
+    const cy = h * 0.5;
+    const out: WorldWaypointMarker[] = [];
+
+    const pushMarker = (
+      id: string,
+      label: string,
+      wx: number,
+      wy: number,
+      wz: number,
+      accentCss: string,
+      kind: WorldWaypointMarker['kind']
+    ) => {
+      const dist = Math.hypot(wx - this.player.x, wz - this.player.z);
+      if (dist < 4.5) return;
+      const p = this._v4.set(wx, wy, wz).project(this.camera);
+      if (p.z >= 1 || p.z < -1) return;
+      const sx = (p.x * 0.5 + 0.5) * w;
+      const sy = (-p.y * 0.5 + 0.5) * h;
+      if (sx < 44 || sx > w - 44 || sy < 72 || sy > h - 120) return;
+
+      // Auto-fade near center reticle so aiming & scopes are NEVER obstructed!
+      const centerDist = Math.hypot(sx - cx, sy - cy);
+      const fade = Math.max(0.14, Math.min(0.92, (centerDist - 38) / 96));
+      out.push({
+        id,
+        label,
+        distanceM: Math.round(dist),
+        screenX: Math.round(sx),
+        screenY: Math.round(sy),
+        accentCss,
+        kind,
+        opacity: Math.round(fade * 100) / 100,
+      });
+    };
+
+    if (this.gameMode === 'campaign') {
+      if (this.missionStage === 'm2_alley' && this.units.every((u) => !u.alive)) {
+        const bd = this.worldRefs.euljiroBreachDoor;
+        pushMarker('wp-breach', 'C4 브리칭 [F]', bd.x, 2.3, bd.z, '#f5b342', 'core');
+      } else if (this.missionStage === 'm4_sacrifice_crisis') {
+        pushMarker('wp-rescue', '소재우 중사 구출 [F]', -3.8, 2.1, -23.2, '#2ee6a6', 'supply');
+      } else if (this.missionStage === 'm4_final_core' && !this.serverShutdownActive) {
+        const cit = this.worldRefs.citadel;
+        pushMarker('wp-core', 'OMNI-CORE 접속 [F]', cit.terminalX, 5.2, cit.terminalZ, '#38d9ff', 'core');
+      }
+    }
+
+    for (let i = 0; i < this.supplyDrops.length; i++) {
+      const sd = this.supplyDrops[i];
+      pushMarker(`wp-sup-${i}`, '발키리 보급', sd.x, sd.y + 2.4, sd.z, '#2ee6a6', 'supply');
+    }
+
+    for (const t of this.worldRefs.turrets) {
+      if (!t.hacked) {
+        const td = Math.hypot(t.x - this.player.x, t.z - this.player.z);
+        if (td < 32) {
+          pushMarker(`wp-tur-${t.id}`, '포탑 해킹 [F]', t.x, 2.8, t.z, '#2dd4bf', 'turret');
+        }
+      }
+    }
+
+    return out.slice(0, 6);
+  }
+
   private computeMinimapDots(): MinimapDot[] {
     if (this.phase !== 'playing' && this.phase !== 'paused') return [];
     const dots: MinimapDot[] = [];
@@ -4874,6 +9684,13 @@ export class IronAshEngine {
           dots.push({ id: `relay-${r.id}`, x: r.x, z: r.z, kind: 'relay' });
         }
       }
+      for (const t of this.worldRefs.turrets) {
+        dots.push({ id: `turret-${t.id}`, x: t.x, z: t.z, kind: 'turret' });
+      }
+    }
+    for (let i = 0; i < this.supplyDrops.length; i++) {
+      const sd = this.supplyDrops[i];
+      dots.push({ id: `supply-${i}`, x: sd.x, z: sd.z, kind: 'supply' });
     }
     for (const ht of this.holotapes) {
       if (!ht.collected) {
@@ -4908,35 +9725,94 @@ export class IronAshEngine {
     const act = getStoryActForWave(this.wave);
     const relaysTotal = this.worldRefs?.relays.length ?? 3;
     const coreHpPct = Math.round((this.coreHp / Math.max(1, this.coreMaxHp)) * 100);
-    const objective = computeMissionObjective(
-      this.wave,
-      this.kills,
-      boss ? boss.name : null,
-      this.relaysDestroyed,
-      relaysTotal,
-      this.coreShieldDown,
-      coreHpPct
+    const aliveHostiles = this.units.filter((u) => u.alive).length;
+    const effectiveRemaining = this.isAc130Active()
+      ? Math.max(0, this.stageTotalHostiles - this.ac130KilledCount)
+      : aliveHostiles;
+    const campaignObj = computeCampaignObjectiveText(
+      this.missionId,
+      this.missionStage,
+      effectiveRemaining,
+      this.stageTotalHostiles,
+      coreHpPct,
+      this.crisisTimer
     );
+    const objective =
+      this.gameMode === 'campaign'
+        ? { text: campaignObj.detail, progressPct: campaignObj.progressPct }
+        : computeMissionObjective(
+            this.wave,
+            this.kills,
+            boss ? boss.name : null,
+            this.relaysDestroyed,
+            relaysTotal,
+            this.coreShieldDown,
+            coreHpPct,
+            this.gameMode
+          );
     const playerYawDeg = (((-this.player.yaw * 180) / Math.PI) % 360 + 360) % 360;
     const cit = this.worldRefs?.citadel;
     const coreDistance = cit
       ? Math.round(Math.hypot(this.player.x - cit.terminalX, this.player.z - cit.terminalZ))
       : 60;
     const canShutdownCore =
+      this.gameMode === 'campaign' &&
+      this.missionStage === 'm4_final_core' &&
       this.coreShieldDown &&
       !this.serverShutdownActive &&
       !this.cinematic.isCutsceneActive() &&
       coreDistance <= 10.5;
+    const threatSt = computeThreatState(this.threatPoints);
+    const styleSt = computeStyleRank(this.comboCount, this.styleScore);
+    const nearTurret = this.findNearHackableTurret();
+    const turretsTotal = this.worldRefs?.turrets.length ?? 2;
+    const turretsHacked = this.worldRefs
+      ? this.worldRefs.turrets.filter((t) => t.hacked).length
+      : 0;
+    const dashChargePct =
+      this.player.dashCharges >= DASH_MAX_CHARGES
+        ? 100
+        : Math.round((this.player.dashRechargeTimer / DASH_RECHARGE_SEC) * 100);
+    const supplyDropCooldownPct =
+      this.supplyDropCd <= 0 ? 100 : Math.round((1 - this.supplyDropCd / 36) * 100);
 
     this.onHudUpdate({
       phase: this.phase,
+      gameMode: this.gameMode,
+      missionId: this.missionId,
+      missionStage: this.missionStage,
+      missionTitle: campaignObj.title,
+      checkpointSeq: this.checkpointSeq,
+      checkpointLabel: this.checkpointLabel,
+      campaignChoices: { ...this.campaignChoices },
+      campaignPrompt: this.campaignPrompt ? { ...this.campaignPrompt } : null,
+      autoEndingReason: this.autoEndingReason,
+      ac130: this.buildAc130HudState(),
+      tank: this.buildTankHudState(),
+      heliRide: this.buildHeliRideHudState(),
+      squadTags: this.projectSquadmateTags(),
+      firstPersonSetpieceActive: this.isFirstPersonSetpieceActive(),
+      breachPromptVisible: this.isBreachDoorInRange(),
+      armorPlates: this.armorPlates,
+      maxArmorPlates: this.maxArmorPlates,
+      platingActive: this.platingTimer > 0,
+      platingPct:
+        this.platingTimer > 0
+          ? Math.round((1 - this.platingTimer / this.platingDuration) * 100)
+          : 0,
+      smokeGrenades: this.smokeGrenades,
+      maxSmokeGrenades: this.maxSmokeGrenades,
+      inSmokeCover: this.isConcealedBySmoke(this.player.x, this.player.z),
+      squadOrder: this.squadOrder,
+      weaponAttachment: this.weaponAttachment,
       wave: this.wave,
-      actNumber: this.coreShieldDown ? 2 : act.actNumber,
-      actTitle: this.coreShieldDown ? '심장부 정지' : act.title,
+      actNumber: this.coreShieldDown ? 4 : act.actNumber,
+      actTitle: this.coreShieldDown ? '제로 아워' : act.title,
       objectiveText: objective.text,
       objectiveProgressPct: objective.progressPct,
       holotapesFound: this.analytics.holotapesFound,
       holotapesTotal: this.analytics.holotapesTotal,
+      unlockedHolotapeIds: Array.from(this.unlockedHolotapeIds),
       relaysDestroyed: this.relaysDestroyed,
       relaysTotal,
       coreShieldDown: this.coreShieldDown,
@@ -4945,6 +9821,8 @@ export class IronAshEngine {
       canShutdownCore,
       coreDistance,
       serverShutdownActive: this.serverShutdownActive,
+      choiceActive: this.cinematic.getSequence() === 'choice',
+      endingId: this.endingId,
       kills: this.kills,
       dismembers: this.dismembers,
       executions: this.executions,
@@ -4955,7 +9833,7 @@ export class IronAshEngine {
       maxArmor: this.player.maxArmor,
       weaponIdx: this.player.wpnIdx,
       ammo: this.player.ammo[this.player.wpnIdx],
-      mag: w.mag,
+      mag: this.getEffectiveMag(this.player.wpnIdx),
       reloading: this.player.reloadTimer > 0,
       ...(() => {
         const isRel = this.player.reloadTimer > 0;
@@ -4985,7 +9863,35 @@ export class IronAshEngine {
       })(),
       grenades: this.player.grenades,
       ads: this.player.ads,
+      adsBlend: Math.round(this.adsBlend * 100) / 100,
+      scopedOpticActive:
+        this.player.wpnIdx === 2 &&
+        this.adsBlend > 0.78 &&
+        this.player.reloadTimer <= 0 &&
+        !this.vatsActive &&
+        !this.cinematic.isCutsceneActive(),
+      holdingBreath: this.holdingBreath,
+      mounted: this.mounted,
+      leanDir: this.leanDir,
+      wallBlocked: this.wallBlocked,
+      isIndoors: this.isIndoors,
+      inspectingWeapon: this.inspectTimer > 0,
+      aimDistanceM: this.aimDistanceM,
+      aimTarget: this.aimTarget,
+      waypoints: this.projectWorldWaypoints(),
+      medals: this.activeMedals.map((m) => ({
+        id: m.id,
+        title: m.title,
+        subtitle: m.subtitle,
+        accentCss: m.accentCss,
+      })),
+      wantedFlashSeq: this.wantedFlashSeq,
       sprinting: this.player.sprinting,
+      isSliding: this.player.slideTimer > 0,
+      isDashing: this.player.dashTimer > 0,
+      dashCharges: this.player.dashCharges,
+      dashMaxCharges: DASH_MAX_CHARGES,
+      dashChargePct,
       crosshairGap: Math.round(
         8 + (this.player.ads ? 0 : this.player.sprinting ? 14 : 8) + this.player.vmKickZ * 75
       ),
@@ -4994,6 +9900,23 @@ export class IronAshEngine {
       vatsTargets: this.vatsActive ? [...this.vatsTargets] : [],
       killstreak: this.killstreak,
       airstrikeReady: this.airstrikeReady,
+      supplyDropReady: this.supplyDropCd <= 0,
+      supplyDropCooldownPct,
+      overdriveTimer: Math.round(this.overdriveTimer * 10) / 10,
+      adrenalineActive: this.adrenalineTimer > 0,
+      adrenalineUsed: this.adrenalineUsed,
+      threatLevel: threatSt.level,
+      threatLabel: threatSt.label,
+      threatProgressPct: threatSt.progressPct,
+      comboCount: this.comboCount,
+      comboTimerPct: Math.max(0, Math.min(100, Math.round((this.comboTimer / 5.6) * 100))),
+      styleGrade: styleSt.grade,
+      styleLabel: styleSt.label,
+      turretsHacked,
+      turretsTotal,
+      nearHackableTurretName: nearTurret ? nearTurret.name : null,
+      killCamActive: this.killCamTimer > 0,
+      killCamBanner: this.killCamBanner,
       gloryKillTargetName: gloryTgt ? gloryTgt.name : null,
       alertBanner: this.alertBanner,
       calloutText: this.calloutText,
@@ -5020,6 +9943,7 @@ export class IronAshEngine {
       causeOfDeath: this.causeOfDeath,
       bossName: boss ? boss.name : null,
       bossHpPct: boss ? Math.max(0, Math.round((boss.hp / boss.maxHp) * 100)) : 0,
+      bossPhase: boss ? boss.bossPhase : 1,
       killFeed: [...this.killFeed],
       analytics: {
         deaths: this.analytics.deaths,
@@ -5081,7 +10005,49 @@ export class IronAshEngine {
       if (Math.abs(e.movementX) > 240 || Math.abs(e.movementY) > 240) return;
       const dx = Math.max(-110, Math.min(110, e.movementX));
       const dy = Math.max(-110, Math.min(110, e.movementY));
-      const mul = this.player.ads ? 0.58 : 1.0;
+
+      // AC-130 FLIR Gunship ground targeting pan via mouse movement
+      if (this.isAc130Active()) {
+        const orbitR = 46;
+        const camX = Math.cos(this.ac130OrbitAngle) * orbitR;
+        const camZ = Math.sin(this.ac130OrbitAngle) * orbitR;
+        const toCenter = this._v1.set(this.ac130TargetX - camX, 0, this.ac130TargetZ - camZ).normalize();
+        const rightV = this._v2.set(-toCenter.z, 0, toCenter.x);
+        const panScale = (this.ac130Zoomed ? 0.045 : 0.095) * (this.sens / 0.0022);
+        this.ac130TargetX = Math.max(
+          -44,
+          Math.min(44, this.ac130TargetX + (rightV.x * dx - toCenter.x * dy) * panScale)
+        );
+        this.ac130TargetZ = Math.max(
+          -44,
+          Math.min(44, this.ac130TargetZ + (rightV.z * dx - toCenter.z * dy) * panScale)
+        );
+        return;
+      }
+
+      // UH-60K Helicopter Door-Gunner M134 Minigun aiming arc
+      if (this.isHeliRideActive()) {
+        const hMul = this.mouseRight ? 0.55 : 0.92;
+        this.heliRide.aimYawOffset = Math.max(
+          -1.22,
+          Math.min(1.22, this.heliRide.aimYawOffset - dx * this.sens * hMul)
+        );
+        this.heliRide.aimPitch = Math.max(
+          -1.18,
+          Math.min(0.28, this.heliRide.aimPitch - dy * this.sens * hMul)
+        );
+        return;
+      }
+
+      // K2-X Tank Turret 360° independent aiming
+      if (this.tank.driving) {
+        const tMul = this.tank.gunnerOptic ? 0.42 : 0.85;
+        this.player.yaw -= dx * this.sens * tMul;
+        this.player.pitch = Math.max(-0.09, Math.min(0.36, this.player.pitch - dy * this.sens * tMul));
+        return;
+      }
+
+      const mul = this.player.ads ? (this.player.wpnIdx === 2 ? 0.34 : 0.56) : 1.0;
       this.player.yaw -= dx * this.sens * mul;
       this.player.pitch -= dy * this.sens * mul;
       this.player.pitch = Math.max(-1.42, Math.min(1.42, this.player.pitch));
@@ -5101,7 +10067,13 @@ export class IronAshEngine {
     }
     if (e.button === 0) {
       this.mouseLeft = true;
-      this.firePlayerWeapon();
+      if (this.isAc130Active()) {
+        this.fireAc130Cannon();
+      } else if (this.tank.driving) {
+        this.fireTankCannon();
+      } else if (!this.isHeliRideActive()) {
+        this.firePlayerWeapon();
+      }
     }
     if (e.button === 2) {
       this.mouseRight = true;
@@ -5119,6 +10091,11 @@ export class IronAshEngine {
 
   private onWheel = (e: WheelEvent): void => {
     if (this.phase !== 'playing' || this.vatsActive || this.cinematic.isCutsceneActive()) return;
+    if (this.isAc130Active()) {
+      const next = ((this.ac130WeaponIdx + (e.deltaY > 0 ? 1 : -1) + 3) % 3) as 0 | 1 | 2;
+      this.selectAc130Weapon(next);
+      return;
+    }
     const next = (this.player.wpnIdx + (e.deltaY > 0 ? 1 : -1) + WEAPONS.length) % WEAPONS.length;
     this.selectWeapon(next);
   };
@@ -5141,6 +10118,16 @@ export class IronAshEngine {
 
     if (!isRepeat && e.code === 'KeyM') {
       this.toggleMute();
+      return;
+    }
+
+    // During Zero Hour Choice climax, allow [1]/[2]/[3] instant ending decisions
+    if (this.phase === 'playing' && this.cinematic.getSequence() === 'choice') {
+      if (!isRepeat) {
+        if (e.code === 'Digit1') this.chooseEnding('dawn');
+        else if (e.code === 'Digit2') this.chooseEnding('symbiosis');
+        else if (e.code === 'Digit3') this.chooseEnding('ascension');
+      }
       return;
     }
 
@@ -5168,7 +10155,29 @@ export class IronAshEngine {
 
     if (this.phase !== 'playing' || !this.player.alive || isRepeat) return;
 
-    if (e.code === 'Space' && this.player.onGround) {
+    // AC-130 FLIR Gunship keyboard controls (1=25mm, 2=40mm, 3=105mm, Q/T=WHOT/BHOT flip)
+    if (this.isAc130Active()) {
+      if (e.code === 'Digit1') this.selectAc130Weapon(0);
+      else if (e.code === 'Digit2') this.selectAc130Weapon(1);
+      else if (e.code === 'Digit3') this.selectAc130Weapon(2);
+      else if (e.code === 'KeyQ' || e.code === 'KeyT') this.toggleAc130Thermal();
+      return;
+    }
+
+    // Inside K2-X Black Panther Tank: dedicated armored controls ([F]/[E] dismount, [H] repair, [B] IR smoke, [SPACE] coax MG)
+    if (this.tank.driving) {
+      if (e.code === 'KeyF' || e.code === 'KeyE') this.exitTank(false);
+      else if (e.code === 'KeyH') this.startArmorPlateInsert();
+      else if (e.code === 'KeyB') this.throwTacticalSmoke();
+      return;
+    }
+
+    // During UH-60K Helicopter Door-Gunner Ride, mouse aims & LMB fires M134
+    if (this.isHeliRideActive()) {
+      return;
+    }
+
+    if (e.code === 'Space' && this.player.onGround && !this.isFirstPersonSetpieceActive()) {
       this.player.vy = 8.4;
       this.player.onGround = false;
     } else if (e.code === 'Digit1') this.selectWeapon(0);
@@ -5176,12 +10185,27 @@ export class IronAshEngine {
     else if (e.code === 'Digit3') this.selectWeapon(2);
     else if (e.code === 'Digit4') this.selectWeapon(3);
     else if (e.code === 'Digit5') this.selectWeapon(4);
+    else if (e.code === 'Digit6') this.selectWeapon(5);
+    else if (e.code === 'KeyC') this.triggerExoDashOrSlide();
+    else if (e.code === 'KeyV') this.callSupplyDrop();
     else if (e.code === 'KeyR') this.startReload();
-    else if (e.code === 'KeyG') this.throwGrenade();
-    else if (e.code === 'KeyE') this.performGloryKill();
-    else if (e.code === 'KeyF') this.tryShutdownServerCore();
-    else if (e.code === 'KeyQ') this.toggleVats();
+    else if (e.code === 'KeyG') {
+      if (this.gameMode === 'campaign' && this.campaignPrompt) {
+        this.resolveCampaignPromptChoice('G');
+      } else {
+        this.throwGrenade();
+      }
+    } else if (e.code === 'KeyE' && !this.player.ads) {
+      if (this.isTankNearPlayer()) this.enterTank();
+      else this.performGloryKill();
+    } else if (e.code === 'KeyF') this.tryInteractKey();
+    else if (e.code === 'KeyQ' && !this.player.ads) this.toggleVats();
     else if (e.code === 'KeyX') this.callAirstrike();
+    else if (e.code === 'KeyH') this.startArmorPlateInsert();
+    else if (e.code === 'KeyB') this.throwTacticalSmoke();
+    else if (e.code === 'KeyT' && !this.player.ads && this.player.reloadTimer <= 0) {
+      this.inspectTimer = 2.4;
+    }
   };
 
   private onKeyUp = (e: KeyboardEvent): void => {
@@ -5240,6 +10264,7 @@ export class IronAshEngine {
     this.composer?.dispose();
     this.audio.dispose();
     this.textures.dispose();
+    this.pbr.dispose();
     this.renderer.dispose();
     if (this.renderer.domElement.parentNode === this.container) {
       this.container.removeChild(this.renderer.domElement);

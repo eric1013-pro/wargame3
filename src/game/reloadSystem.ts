@@ -30,6 +30,7 @@ export interface ReloadAnimPose {
    * - RAIL-X9 (2): Plasma core & accelerator coil power level (0 = discharged, 1 = full charge)
    * - HYDRA-7 (3): Warhead lock-on readiness (0 = open tube, 1 = armed)
    * - INFERNO-X (4): Pilot igniter flame & manifold pressure (0 = vented, 1 = pressurized)
+   * - ZEUS-MK7 (5): Rotating Tesla coil arc resonance (0 = discharged, 1 = overcharged)
    */
   auxValue: number;
 }
@@ -121,6 +122,17 @@ export const WEAPON_RELOAD_PROFILES: readonly WeaponReloadProfile[] = [
     tacticalEmptyingLabel: '압력 유지 분리',
     tacticalLoadingLabel: '신속 탱크 체결',
   },
+  // [5] ZEUS-MK7 Chain Arc Tesla Cannon
+  {
+    emptyEnd: 0.40,
+    chamberStart: 0.76,
+    tacticalEmptyEnd: 0.44,
+    emptyingLabel: '방전 아크 코어 분리',
+    loadingLabel: '고전압 셀 장착',
+    chamberingLabel: '테슬라 코일 공진',
+    tacticalEmptyingLabel: '전술 아크 셀 교체',
+    tacticalLoadingLabel: '신속 공진 결합',
+  },
 ];
 
 function clamp01(v: number): number {
@@ -161,7 +173,7 @@ export function computeReloadTiming(
 }
 
 export function createNeutralReloadPose(weaponIdx: number): ReloadAnimPose {
-  const defaultAux = weaponIdx === 2 || weaponIdx === 3 || weaponIdx === 4 ? 1 : 0;
+  const defaultAux = weaponIdx >= 2 ? 1 : 0;
   return {
     pivotPos: { x: 0, y: 0, z: 0 },
     pivotRot: { x: 0, y: 0, z: 0 },
@@ -195,8 +207,7 @@ export function createIdleReloadHud(weaponIdx = 0): ReloadHudState {
 
 /**
  * Evaluates the exact weapon-specific 3D viewmodel reload pose and dual-phase HUD state
- * for a normalized reload progress `p` in [0, 1], supporting both Full Empty Reload
- * (Emptying -> Loading -> Chambering) and 20%-faster Tactical Reload (skipping chamber rack).
+ * for a normalized reload progress `p` in [0, 1].
  */
 export function evaluateWeaponReload(
   weaponIdx: number,
@@ -251,11 +262,9 @@ export function evaluateWeaponReload(
 
   const pose = createNeutralReloadPose(idx);
   const env = smoothstep(0, 0.09, p) * (1 - smoothstep(0.91, 1.0, p));
-  // Tactical reloads stay tighter to the sightline (faster, more controlled cant)
   const cantScale = isTactical ? 0.82 : 1.0;
 
   if (idx === 0) {
-    // [0] M41-X PULSE ASSAULT RIFLE
     const seatPeak = isTactical ? 0.84 : 0.71;
     const seatBump = Math.exp(-Math.pow((p - seatPeak) / 0.042, 2));
     const boltPull =
@@ -301,7 +310,6 @@ export function evaluateWeaponReload(
       pose.leftHandRot.x = -0.25 * boltPull;
     }
   } else if (idx === 1) {
-    // [1] DOOM-99 HEAVY COMBAT SHOTGUN
     const shellCycles = isTactical ? 1 : 2;
     const shellCycle =
       phase === 'loading' ? Math.abs(Math.sin(phaseProgress * Math.PI * shellCycles)) : 0;
@@ -335,7 +343,6 @@ export function evaluateWeaponReload(
       pose.leftHandPos.y = -0.015 * pumpRack;
     }
   } else if (idx === 2) {
-    // [2] RAIL-X9 ELECTROMAGNETIC RAILGUN
     const lockPeak = isTactical ? 0.85 : 0.72;
     const lockJolt = Math.exp(-Math.pow((p - lockPeak) / 0.038, 2));
     const chargeSurge =
@@ -382,7 +389,6 @@ export function evaluateWeaponReload(
       pose.magVisible = true;
     }
   } else if (idx === 3) {
-    // [3] HYDRA-7 GUIDED ROCKET LAUNCHER
     const heavePeak = isTactical ? 0.86 : 0.84;
     const heaveBump = Math.exp(-Math.pow((p - heavePeak) / 0.055, 2));
 
@@ -416,8 +422,7 @@ export function evaluateWeaponReload(
       pose.auxValue = smoothstep(0.0, 0.8, phaseProgress);
       pose.magVisible = true;
     }
-  } else {
-    // [4] INFERNO-X PLASMA FLAMETHROWER
+  } else if (idx === 4) {
     const lockPeak = isTactical ? 0.86 : 0.78;
     const lockTwist = Math.exp(-Math.pow((p - lockPeak) / 0.04, 2));
 
@@ -453,6 +458,41 @@ export function evaluateWeaponReload(
       pose.leftHandRot.z = lerp(-0.4, 0, screwIn);
     } else {
       pose.auxValue = smoothstep(0.0, 0.85, phaseProgress);
+      pose.magVisible = true;
+    }
+  } else {
+    // [5] ZEUS-MK7 CHAIN ARC TESLA CANNON
+    const seatPeak = isTactical ? 0.84 : 0.72;
+    const seatJolt = Math.exp(-Math.pow((p - seatPeak) / 0.04, 2));
+    pose.pivotPos.x = -0.055 * cantScale * env;
+    pose.pivotPos.y = -0.07 * cantScale * env + seatJolt * 0.032;
+    pose.pivotPos.z = 0.045 * env;
+    pose.pivotRot.x = (-0.16 * cantScale + seatJolt * 0.14) * env;
+    pose.pivotRot.y = 0.24 * cantScale * env;
+    pose.pivotRot.z = 0.52 * cantScale * env * (1 - smoothstep(0.76, 0.95, p));
+
+    if (phase === 'emptying') {
+      const eject = smoothstep(0.12, 0.86, phaseProgress);
+      pose.auxValue = isTactical ? 0.45 : 1 - smoothstep(0, 0.6, phaseProgress);
+      pose.magPos.x = 0.12 * eject;
+      pose.magPos.y = 0.14 * eject;
+      pose.magRot.z = -0.8 * eject;
+      pose.magVisible = phaseProgress < 0.86;
+      pose.leftHandPos.x = 0.08 * eject;
+      pose.leftHandPos.y = 0.08 * eject;
+      pose.leftHandPos.z = 0.22 * smoothstep(0, 0.35, phaseProgress);
+    } else if (phase === 'loading') {
+      const seat = smoothstep(0.1, 0.85, phaseProgress);
+      pose.auxValue = isTactical ? lerp(0.45, 1.0, seat) : 0.12 + 0.24 * seat;
+      pose.magVisible = phaseProgress > 0.08;
+      pose.magPos.x = lerp(0.16, 0, seat);
+      pose.magPos.y = lerp(0.18, 0, seat);
+      pose.magRot.z = lerp(-0.7, 0, seat);
+      pose.leftHandPos.x = lerp(0.1, 0, seat);
+      pose.leftHandPos.y = lerp(0.12, -0.02, seat) + seatJolt * 0.025;
+      pose.leftHandPos.z = 0.22 * (1 - smoothstep(0.82, 1.0, phaseProgress));
+    } else {
+      pose.auxValue = lerp(0.35, 1.0, smoothstep(0.05, 0.9, phaseProgress));
       pose.magVisible = true;
     }
   }
