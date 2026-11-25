@@ -210,21 +210,21 @@ export function createExtendedPbrLibrary(maxAnisotropy: number): ExtendedPbrLibr
     1,
     maxAnisotropy,
     (a, h, r, o, s) => {
-      a.fillStyle = '#1c1f26';
+      a.fillStyle = '#38414e';
       a.fillRect(0, 0, s, s);
       h.fillStyle = '#828282';
       h.fillRect(0, 0, s, s);
       r.fillStyle = '#5e5e5e';
       r.fillRect(0, 0, s, s);
-      o.fillStyle = '#e8e8e8';
+      o.fillStyle = '#ececec';
       o.fillRect(0, 0, s, s);
 
       // Fine matte bead-blasted anodizing grain + edge scratches
       for (let i = 0; i < 3200; i++) {
         const x = (i * 89) % s;
         const y = (i * 47) % s;
-        const v = 24 + (i % 18);
-        a.fillStyle = `rgb(${v},${v + 2},${v + 5})`;
+        const v = 50 + (i % 20);
+        a.fillStyle = `rgb(${v},${v + 4},${v + 10})`;
         a.fillRect(x, y, 3, 2);
         const hv = 120 + (i % 20);
         h.fillStyle = `rgb(${hv},${hv},${hv})`;
@@ -232,7 +232,7 @@ export function createExtendedPbrLibrary(maxAnisotropy: number): ExtendedPbrLibr
       }
 
       // Machined lightening pocket & edge highlight
-      a.strokeStyle = '#5a6370';
+      a.strokeStyle = '#7e8a9c';
       a.lineWidth = 3;
       a.strokeRect(24, 34, s - 48, s - 68);
       h.strokeStyle = '#353535';
@@ -270,7 +270,7 @@ export function createExtendedPbrLibrary(maxAnisotropy: number): ExtendedPbrLibr
         ctx.fillText('안전 · 단발 · 연사', 44, s - 56);
       };
 
-      drawEngraving(a, 'rgba(182, 194, 210, 0.72)', 74, 'rgba(156, 168, 184, 0.56)');
+      drawEngraving(a, 'rgba(226, 236, 248, 0.88)', 74, 'rgba(196, 208, 224, 0.72)');
       drawEngraving(h, '#343434', 74, '#444444');
       drawEngraving(r, '#262626', 74, '#363636');
       drawEngraving(o, '#666666', 74, '#777777');
@@ -303,20 +303,20 @@ export function createExtendedPbrLibrary(maxAnisotropy: number): ExtendedPbrLibr
     3,
     maxAnisotropy,
     (a, h, r, o, s) => {
-      a.fillStyle = '#14171d';
+      a.fillStyle = '#2d3440';
       a.fillRect(0, 0, s, s);
       h.fillStyle = '#707070';
       h.fillRect(0, 0, s, s);
       r.fillStyle = '#cfcfcf';
       r.fillRect(0, 0, s, s);
-      o.fillStyle = '#d8d8d8';
+      o.fillStyle = '#e4e4e4';
       o.fillRect(0, 0, s, s);
 
       // Ripstop Kevlar weave pattern
       for (let y = 0; y < s; y += 8) {
         for (let x = 0; x < s; x += 8) {
           const alt = ((x + y) / 8) % 2 === 0;
-          a.fillStyle = alt ? '#1d2129' : '#101318';
+          a.fillStyle = alt ? '#3a4352' : '#252b36';
           a.fillRect(x + 1, y + 1, 6, 6);
           h.fillStyle = alt ? '#b8b8b8' : '#4a4a4a';
           h.fillRect(x + 1, y + 1, 6, 6);

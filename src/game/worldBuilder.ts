@@ -325,10 +325,10 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
     depthWrite: false,
     fog: false,
     uniforms: {
-      topColor: { value: new THREE.Color(0x090f19) },
-      midColor: { value: new THREE.Color(0x182434) },
-      horizonColor: { value: new THREE.Color(0x2d3847) },
-      glowColor: { value: new THREE.Color(0x88533e) },
+      topColor: { value: new THREE.Color(0x223248) },
+      midColor: { value: new THREE.Color(0x465d78) },
+      horizonColor: { value: new THREE.Color(0x7c8ea3) },
+      glowColor: { value: new THREE.Color(0xd99e72) },
       uTime: { value: 0 },
       uAuroraStrength: { value: 0 },
       uSunGlow: { value: 0 },
@@ -957,18 +957,18 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
     relays.push(relayEntity);
   }
 
-  // Brutalist Korean poured concrete PBR material (formwork joints, tie holes, rain runoff streaks & AO!)
+  // Brutalist Korean poured concrete PBR material (formwork joints, tie holes, rain runoff streaks & balanced AO!)
   const brutalistConcreteMat = new THREE.MeshStandardMaterial({
-    color: 0xd0d6de,
+    color: 0xe8edf4,
     map: pbr.seoulConcrete.map,
     normalMap: pbr.seoulConcrete.normalMap,
-    normalScale: new THREE.Vector2(1.15, 1.15),
+    normalScale: new THREE.Vector2(1.05, 1.05),
     roughnessMap: pbr.seoulConcrete.roughnessMap,
     aoMap: pbr.seoulConcrete.aoMap,
-    aoMapIntensity: 0.92,
-    roughness: 0.92,
+    aoMapIntensity: 0.45,
+    roughness: 0.86,
     metalness: 0.08,
-    envMapIntensity: 0.45,
+    envMapIntensity: 0.78,
   });
 
   // =========================================================================
@@ -1243,30 +1243,30 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
     });
   }
 
-  // Photorealistic smoked architectural curtain-wall skyscraper glass PBR (mirrors storm sky & warm offices!)
+  // Photorealistic smoked architectural curtain-wall skyscraper glass PBR (mirrors silver-dawn sky & warm offices!)
   const skyTowerGlassMat = new THREE.MeshStandardMaterial({
-    color: 0xdce4ee,
+    color: 0xf2f6fb,
     map: pbr.skyscraperGlass.map,
     normalMap: pbr.skyscraperGlass.normalMap,
     normalScale: new THREE.Vector2(0.85, 0.85),
     roughnessMap: pbr.skyscraperGlass.roughnessMap,
     aoMap: pbr.skyscraperGlass.aoMap,
-    aoMapIntensity: 0.78,
-    emissive: 0xffe4be,
+    aoMapIntensity: 0.4,
+    emissive: 0xffe6c4,
     emissiveMap: pbr.skyscraperGlass.map,
-    emissiveIntensity: 0.34,
-    roughness: 0.92,
-    metalness: 0.56,
-    envMapIntensity: 1.35,
+    emissiveIntensity: 0.48,
+    roughness: 0.42,
+    metalness: 0.62,
+    envMapIntensity: 1.65,
   });
   const skyTowerConcreteMat = new THREE.MeshStandardMaterial({
-    color: 0x525b68,
+    color: 0x9aa6b5,
     map: pbr.seoulConcrete.map,
     normalMap: pbr.seoulConcrete.normalMap,
     roughnessMap: pbr.seoulConcrete.roughnessMap,
-    roughness: 0.88,
-    metalness: 0.14,
-    envMapIntensity: 0.45,
+    roughness: 0.84,
+    metalness: 0.12,
+    envMapIntensity: 0.78,
   });
   for (let i = 0; i < 36; i++) {
     const ang = (i / 36) * Math.PI * 2;
@@ -1894,40 +1894,40 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
   //     - 3 Burning ROK K-808 8x8 Armored Personnel Carriers (.glb!) + Oil Smoke & Steam Plumes
   // =========================================================================
   const seoulConcreteMat = new THREE.MeshStandardMaterial({
-    color: 0xd0d4da,
+    color: 0xedf1f6,
     map: pbr.seoulFacade.map,
     normalMap: pbr.seoulFacade.normalMap,
-    normalScale: new THREE.Vector2(1.05, 1.05),
+    normalScale: new THREE.Vector2(1.0, 1.0),
     roughnessMap: pbr.seoulFacade.roughnessMap,
     aoMap: pbr.seoulFacade.aoMap,
-    aoMapIntensity: 0.85,
-    roughness: 0.9,
+    aoMapIntensity: 0.42,
+    roughness: 0.86,
     metalness: 0.08,
-    envMapIntensity: 0.35,
+    envMapIntensity: 0.72,
   });
   const sandbagMat = new THREE.MeshStandardMaterial({
-    color: 0xbcb39f,
+    color: 0xe6dcc8,
     map: pbr.sandbag.map,
     normalMap: pbr.sandbag.normalMap,
-    normalScale: new THREE.Vector2(1.1, 1.1),
+    normalScale: new THREE.Vector2(1.05, 1.05),
     roughnessMap: pbr.sandbag.roughnessMap,
     aoMap: pbr.sandbag.aoMap,
-    aoMapIntensity: 0.9,
-    roughness: 0.96,
+    aoMapIntensity: 0.46,
+    roughness: 0.92,
     metalness: 0.03,
-    envMapIntensity: 0.25,
+    envMapIntensity: 0.65,
   });
   const weatheredConcreteMat = new THREE.MeshStandardMaterial({
-    color: 0xa4acb8,
+    color: 0xd8e0ea,
     map: pbr.seoulConcrete.map,
     normalMap: pbr.seoulConcrete.normalMap,
-    normalScale: new THREE.Vector2(1.15, 1.15),
+    normalScale: new THREE.Vector2(1.05, 1.05),
     roughnessMap: pbr.seoulConcrete.roughnessMap,
     aoMap: pbr.seoulConcrete.aoMap,
-    aoMapIntensity: 0.9,
-    roughness: 0.9,
+    aoMapIntensity: 0.46,
+    roughness: 0.86,
     metalness: 0.08,
-    envMapIntensity: 0.45,
+    envMapIntensity: 0.78,
   });
 
   // A) Authentic Korean Road Markings (Crosswalks + "천천히" Stencils + Double Yellow Centerlines)
@@ -2020,17 +2020,17 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
       });
     }
   }
-  // Authentic Seoul Metro Exit Signboard ("을지로4가역 3번출구") — subtle fluorescent backlit signage (well below bloom threshold!)
+  // Authentic Seoul Metro Exit Signboard ("을지로4가역 3번출구") — crisp architectural backlit signage
   const subwaySignMesh = new THREE.Mesh(
     new THREE.BoxGeometry(7.6, 1.5, 0.28),
     new THREE.MeshStandardMaterial({
       map: pbr.koreanSigns.subway,
       emissive: 0xffffff,
       emissiveMap: pbr.koreanSigns.subway,
-      emissiveIntensity: 0.42,
-      roughness: 0.78,
+      emissiveIntensity: 0.62,
+      roughness: 0.68,
       metalness: 0.08,
-      envMapIntensity: 0.3,
+      envMapIntensity: 0.55,
     })
   );
   subwaySignMesh.position.set(0, 4.95, 25.7);
@@ -2039,6 +2039,10 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
   subwaySignMesh.userData = { isWorld: true, surface: 'metal' };
   subwayCanopy.add(subwaySignMesh);
   worldHitMeshes.push(subwaySignMesh);
+  // Warm practical subway entrance ceiling fill light so player spawn shelter & signage glow with depth!
+  const subwayFillLight = new THREE.PointLight(0xffe6c4, 12.0, 22, 1.35);
+  subwayFillLight.position.set(0, 4.4, 31.5);
+  subwayCanopy.add(subwayFillLight);
   scene.add(subwayCanopy);
   indoorZones.push({ minX: -12, maxX: 12, minZ: 25.5, maxZ: 40, maxY: 5.5 });
 
@@ -2157,10 +2161,10 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
         map: signPrimary,
         emissive: 0xffffff,
         emissiveMap: signPrimary,
-        emissiveIntensity: 0.38,
-        roughness: 0.74,
+        emissiveIntensity: 0.58,
+        roughness: 0.66,
         metalness: 0.08,
-        envMapIntensity: 0.3,
+        envMapIntensity: 0.55,
       })
     );
     s1.position.set(baseX - side * 4.28, deckY + 2.55, 17.0);
@@ -2175,10 +2179,10 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
         map: signSecondary,
         emissive: 0xffffff,
         emissiveMap: signSecondary,
-        emissiveIntensity: 0.38,
-        roughness: 0.74,
+        emissiveIntensity: 0.58,
+        roughness: 0.66,
         metalness: 0.08,
-        envMapIntensity: 0.3,
+        envMapIntensity: 0.55,
       })
     );
     s2.position.set(baseX, deckY + 2.55, 13.38);
@@ -2237,9 +2241,10 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
         map: tex,
         emissive: 0xffffff,
         emissiveMap: tex,
-        emissiveIntensity: 0.36,
-        roughness: 0.62,
-        metalness: 0.14,
+        emissiveIntensity: 0.56,
+        roughness: 0.58,
+        metalness: 0.12,
+        envMapIntensity: 0.55,
       })
     );
     sign.position.set(sx, sy, sz);
@@ -2353,7 +2358,7 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
     [-11.2, 9, -11.2, -12],
     [11.2, 9, 11.2, -12],
   ];
-  const wireMat = new THREE.LineBasicMaterial({ color: 0x0f1218 });
+  const wireMat = new THREE.LineBasicMaterial({ color: 0x26303d });
   for (const [x1, z1, x2, z2] of wirePairs) {
     for (const hOff of [9.6, 10.5]) {
       const curve = new THREE.CatmullRomCurve3([
@@ -2558,13 +2563,13 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
   breachGroup.position.set(12.6, 0, 4.5);
   const doorFrameMat = matCache.darkIron;
   const doorLeafMat = new THREE.MeshStandardMaterial({
-    color: 0x3b424d,
+    color: 0x727f90,
     map: pbr.gunmetal.map,
     normalMap: pbr.gunmetal.normalMap,
     normalScale: new THREE.Vector2(0.85, 0.85),
-    roughness: 0.58,
-    metalness: 0.72,
-    envMapIntensity: 0.5,
+    roughness: 0.54,
+    metalness: 0.62,
+    envMapIntensity: 0.95,
   });
   const frameTop = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.55, 3.6), doorFrameMat);
   frameTop.position.set(0, 3.15, 0);

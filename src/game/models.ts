@@ -902,35 +902,35 @@ export function buildPlayerFirstPersonBody(pbr: ExtendedPbrLibrary): PlayerBodyR
   root.name = 'PlayerFirstPersonBody';
 
   const trouserMat = new THREE.MeshStandardMaterial({
-    color: 0xc2cbc6,
+    color: 0xe2eae4,
     map: pbr.rokCamo.map,
     normalMap: pbr.rokCamo.normalMap,
     normalScale: new THREE.Vector2(0.85, 0.85),
     roughnessMap: pbr.rokCamo.roughnessMap,
     aoMap: pbr.rokCamo.aoMap,
-    aoMapIntensity: 0.8,
-    roughness: 0.92,
+    aoMapIntensity: 0.45,
+    roughness: 0.88,
     metalness: 0.05,
-    envMapIntensity: 0.35,
+    envMapIntensity: 0.65,
   });
   const armorMat = new THREE.MeshStandardMaterial({
-    color: 0xbac4d0,
+    color: 0xdce4f0,
     map: pbr.carbonArmor.map,
     normalMap: pbr.carbonArmor.normalMap,
     normalScale: new THREE.Vector2(0.9, 0.9),
     roughnessMap: pbr.carbonArmor.roughnessMap,
     aoMap: pbr.carbonArmor.aoMap,
-    aoMapIntensity: 0.85,
-    roughness: 0.46,
-    metalness: 0.56,
-    envMapIntensity: 0.75,
+    aoMapIntensity: 0.45,
+    roughness: 0.44,
+    metalness: 0.54,
+    envMapIntensity: 1.05,
   });
   const bootMat = new THREE.MeshStandardMaterial({
-    color: 0x1d2128,
+    color: 0x3b424e,
     normalMap: pbr.kevlarGlove.normalMap,
-    roughness: 0.86,
-    metalness: 0.12,
-    envMapIntensity: 0.4,
+    roughness: 0.82,
+    metalness: 0.14,
+    envMapIntensity: 0.68,
   });
 
   // Lower plate-carrier belt & waist rig (pushed slightly back so it never clips camera pitch)
@@ -1890,24 +1890,28 @@ export interface RokNavyLcacRig {
 export function buildRokNavyLcacHovercraft(): RokNavyLcacRig {
   const group = new THREE.Group();
   const hullMat = new THREE.MeshStandardMaterial({
-    color: 0x3a434d,
-    roughness: 0.62,
-    metalness: 0.54,
+    color: 0x677586,
+    roughness: 0.54,
+    metalness: 0.52,
+    envMapIntensity: 1.05,
   });
   const deckMat = new THREE.MeshStandardMaterial({
-    color: 0x22262c,
-    roughness: 0.82,
-    metalness: 0.35,
+    color: 0x454e5c,
+    roughness: 0.76,
+    metalness: 0.34,
+    envMapIntensity: 0.85,
   });
   const skirtMat = new THREE.MeshStandardMaterial({
-    color: 0x14171c,
-    roughness: 0.92,
+    color: 0x2e343e,
+    roughness: 0.88,
     metalness: 0.08,
+    envMapIntensity: 0.55,
   });
   const darkIron = new THREE.MeshStandardMaterial({
-    color: 0x1b2028,
+    color: 0x465162,
     roughness: 0.44,
-    metalness: 0.82,
+    metalness: 0.72,
+    envMapIntensity: 1.05,
   });
 
   // Painted "대한민국해군 · 655" hull side plate CanvasTexture

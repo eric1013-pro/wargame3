@@ -369,10 +369,10 @@ const MAX_SHELLS = 36;
 const CINEMATIC_GRADE_SHADER = {
   uniforms: {
     tDiffuse: { value: null },
-    uChromatic: { value: 0.0005 },
-    uVignette: { value: 0.24 },
-    uContrast: { value: 1.03 },
-    uSaturation: { value: 1.06 },
+    uChromatic: { value: 0.0004 },
+    uVignette: { value: 0.14 },
+    uContrast: { value: 1.04 },
+    uSaturation: { value: 1.08 },
     uTint: { value: new THREE.Vector3(1.0, 1.0, 1.0) },
     uFlirMode: { value: 0.0 }, // 0 = normal, 1 = WHOT (White-Hot Thermal), 2 = BHOT (Black-Hot Thermal)
     uTime: { value: 0.0 },
@@ -442,22 +442,25 @@ const CINEMATIC_GRADE_SHADER = {
       float b = texture2D(tDiffuse, clamp(vUv - offset, 0.001, 0.999)).b;
       vec3 col = vec3(r, g, b);
 
-      // Filmic contrast + rich vibrancy
+      // Luxurious Cinema Shadow-Recovery + Filmic S-Curve (ARRI Alexa / MWIII color science — zero crushed blacks!)
+      float rawLuma = dot(col, vec3(0.2126, 0.7152, 0.0722));
+      float shadowLift = smoothstep(0.32, 0.0, rawLuma) * 0.055;
+      col += vec3(shadowLift * 0.96, shadowLift * 1.0, shadowLift * 1.06);
       col = (col - 0.5) * uContrast + 0.5;
       float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
       col = mix(vec3(luma), col, uSaturation);
 
-      // Subtle Neo-Seoul shadow/highlight split tone (cool steel shadows, crisp warm highlights)
-      vec3 shadowTone = vec3(0.95, 0.99, 1.05);
-      vec3 highlightTone = vec3(1.03, 1.0, 0.96);
-      col *= mix(shadowTone, highlightTone, smoothstep(0.18, 0.78, luma));
+      // Refined architectural split tone: cool silver-slate shadows + warm champagne-gold highlights
+      vec3 shadowTone = vec3(0.96, 0.99, 1.04);
+      vec3 highlightTone = vec3(1.04, 1.01, 0.96);
+      col *= mix(shadowTone, highlightTone, smoothstep(0.16, 0.76, luma));
       col *= uTint;
 
-      // Optical lens vignette
-      float vig = smoothstep(0.88, 0.3, dist);
+      // Subtle optical lens vignette (keeps corners crisp & readable)
+      float vig = smoothstep(0.92, 0.34, dist);
       col *= mix(1.0 - uVignette, 1.0, vig);
 
-      gl_FragColor = vec4(max(col, vec3(0.0)), 1.0);
+      gl_FragColor = vec4(clamp(col, vec3(0.0), vec3(1.0)), 1.0);
     }
   `,
 };
@@ -846,9 +849,9 @@ export class IronAshEngine {
     this.isSoftwareGl = detectSoftwareGl();
 
     this.scene = new THREE.Scene();
-    // Deep obsidian-slate atmospheric dusk (zero cliché purple haze, crisp depth separation)
-    this.scene.background = new THREE.Color(0x0a0d13);
-    this.scene.fog = new THREE.FogExp2(0x0e131b, 0.0094);
+    // Luminous Overcast Silver-Dawn Neo-Seoul Atmosphere (crisp aerial perspective, zero pitch-black fog!)
+    this.scene.background = new THREE.Color(0x324256);
+    this.scene.fog = new THREE.FogExp2(0x3f5064, 0.0056);
 
     this.camera = new THREE.PerspectiveCamera(
       76,
@@ -871,7 +874,7 @@ export class IronAshEngine {
     );
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.02;
+    this.renderer.toneMappingExposure = 1.28;
     this.renderer.shadowMap.enabled = !this.isSoftwareGl;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.domElement.dataset.testid = 'warzone-canvas';
@@ -880,50 +883,50 @@ export class IronAshEngine {
     this.renderer.domElement.style.height = '100%';
     container.appendChild(this.renderer.domElement);
 
-    // Rich Multi-Band Stormy Pre-Dawn Neo-Seoul PMREM IBL (gives realistic wet-puddle, glass & titanium reflections!)
+    // Luxurious Overcast Silver-Dawn Seoul PMREM IBL (illuminates wet puddles, glass skyscrapers, gunmetal & armor edges!)
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     const envScene = new THREE.Scene();
-    envScene.background = new THREE.Color(0x0d1522);
+    envScene.background = new THREE.Color(0x455a74);
     const skyPanel = new THREE.Mesh(
       new THREE.SphereGeometry(24, 24, 16),
-      new THREE.MeshBasicMaterial({ color: 0x26384d, side: THREE.BackSide })
+      new THREE.MeshBasicMaterial({ color: 0x6b85a3, side: THREE.BackSide })
     );
     envScene.add(skyPanel);
-    // Bright silver-steel overcast cloud break overhead (drives crisp metallic edge speculars!)
+    // Bright silver overcast skylight canopy overhead (drives crisp realistic metallic highlights!)
     const cloudBreak = new THREE.Mesh(
-      new THREE.PlaneGeometry(24, 18),
-      new THREE.MeshBasicMaterial({ color: 0x9cb4cf })
+      new THREE.PlaneGeometry(32, 24),
+      new THREE.MeshBasicMaterial({ color: 0xe6f0fa })
     );
     cloudBreak.rotation.x = Math.PI / 2;
-    cloudBreak.position.set(5, 13, -4);
+    cloudBreak.position.set(6, 13, 4);
     envScene.add(cloudBreak);
-    // Distant muted amber city firelight horizon strip (warm contrast in wet puddles & gunmetal)
+    // Refined muted champagne-silver dawn horizon strip (subtle luxury contrast without yellowing the tarmac)
     const fireBounce = new THREE.Mesh(
-      new THREE.PlaneGeometry(26, 5.5),
-      new THREE.MeshBasicMaterial({ color: 0xa8582c })
+      new THREE.PlaneGeometry(30, 7.5),
+      new THREE.MeshBasicMaterial({ color: 0xb2a498 })
     );
-    fireBounce.position.set(0, 2.5, -15);
+    fireBounce.position.set(0, 3.2, -15);
     envScene.add(fireBounce);
-    // Cool cyan-slate Seoul streetlamp bounce on east/west flanks
+    // Soft architectural side skylight fill on east/west flanks (keeps vertical building facades & robot silhouettes readable)
     for (const sx of [-15, 15]) {
       const flank = new THREE.Mesh(
-        new THREE.PlaneGeometry(18, 4.5),
-        new THREE.MeshBasicMaterial({ color: sx < 0 ? 0x6f5a44 : 0x45698c })
+        new THREE.PlaneGeometry(22, 7.0),
+        new THREE.MeshBasicMaterial({ color: sx < 0 ? 0xb4a494 : 0x8aa8c8 })
       );
-      flank.position.set(sx, 2.8, 0);
+      flank.position.set(sx, 3.5, 0);
       flank.rotation.y = sx < 0 ? Math.PI / 2 : -Math.PI / 2;
       envScene.add(flank);
     }
-    // Dark damp asphalt ground bounce so undersides keep rich contrast
+    // Balanced cool-slate asphalt bounce so undersides preserve subtle modeling instead of turning pitch black
     const groundBounce = new THREE.Mesh(
-      new THREE.PlaneGeometry(42, 42),
-      new THREE.MeshBasicMaterial({ color: 0x0a0e14 })
+      new THREE.PlaneGeometry(44, 44),
+      new THREE.MeshBasicMaterial({ color: 0x3b4654 })
     );
     groundBounce.rotation.x = -Math.PI / 2;
     groundBounce.position.y = -6;
     envScene.add(groundBounce);
     this.scene.environment = pmrem.fromScene(envScene, 0.04).texture;
-    this.scene.environmentIntensity = 1.12;
+    this.scene.environmentIntensity = 1.48;
     pmrem.dispose();
 
     const maxAniso = this.isSoftwareGl ? 1 : Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
@@ -1054,11 +1057,11 @@ export class IronAshEngine {
 
       this.gtaoPass = new GTAOPass(this.scene, this.camera, initW, initH);
       this.gtaoPass.output = GTAOPass.OUTPUT.Default;
-      this.gtaoPass.blendIntensity = 0.52;
+      this.gtaoPass.blendIntensity = 0.34;
       this.gtaoPass.updateGtaoMaterial({
-        radius: 0.54,
+        radius: 0.48,
         distanceExponent: 2.0,
-        thickness: 0.95,
+        thickness: 0.85,
         samples: 12,
       });
       this.gtaoPass.updatePdMaterial({
@@ -1115,80 +1118,80 @@ export class IronAshEngine {
 
   private initMaterials(): void {
     this.matCache = {
-      // Real photographic rain-wet Seoul tarmac asphalt with Sobel normal + glossy wet puddles + active AO!
+      // Real photographic rain-wet Seoul tarmac asphalt (sleek deep charcoal-slate road contrasting white crosswalks & concrete!)
       floor: new THREE.MeshStandardMaterial({
-        color: 0xd4dce6,
+        color: 0x626e7e,
         map: this.pbr.seoulAsphalt.map,
         normalMap: this.pbr.seoulAsphalt.normalMap,
-        normalScale: new THREE.Vector2(1.15, 1.15),
+        normalScale: new THREE.Vector2(0.52, 0.52),
         roughnessMap: this.pbr.seoulAsphalt.roughnessMap,
         aoMap: this.pbr.seoulAsphalt.aoMap,
-        aoMapIntensity: 0.85,
-        roughness: 0.86,
-        metalness: 0.24,
-        envMapIntensity: 1.25,
+        aoMapIntensity: 0.45,
+        roughness: 0.82,
+        metalness: 0.08,
+        envMapIntensity: 0.85,
       }),
-      // Matte war-scarred concrete & Euljiro architectural bulkheads
+      // Crisp war-scarred concrete & Euljiro architectural facades (high architectural readability!)
       concrete: new THREE.MeshStandardMaterial({
-        color: 0xc8ced6,
+        color: 0xecf1f7,
         map: this.pbr.seoulFacade.map,
         normalMap: this.pbr.seoulFacade.normalMap,
         normalScale: new THREE.Vector2(0.95, 0.95),
         roughnessMap: this.pbr.seoulFacade.roughnessMap,
         aoMap: this.pbr.seoulFacade.aoMap,
-        aoMapIntensity: 0.85,
-        roughness: 0.9,
+        aoMapIntensity: 0.45,
+        roughness: 0.86,
         metalness: 0.1,
-        envMapIntensity: 0.35,
+        envMapIntensity: 0.72,
       }),
-      // Battle-worn matte olive-gunmetal military armor plating (real photographic gunmetal PBR!)
+      // Battle-worn matte titanium-gunmetal military armor plating
       armorPlate: new THREE.MeshStandardMaterial({
-        color: 0xbac2cc,
+        color: 0xdce4ee,
         map: this.pbr.gunmetal.map,
         normalMap: this.pbr.gunmetal.normalMap,
         normalScale: new THREE.Vector2(0.9, 0.9),
         roughnessMap: this.pbr.gunmetal.roughnessMap,
         aoMap: this.pbr.gunmetal.aoMap,
-        aoMapIntensity: 0.85,
-        roughness: 0.76,
-        metalness: 0.62,
-        envMapIntensity: 0.58,
+        aoMapIntensity: 0.45,
+        roughness: 0.68,
+        metalness: 0.52,
+        envMapIntensity: 0.98,
       }),
       darkIron: new THREE.MeshStandardMaterial({
-        color: 0x252b34,
+        color: 0x5c6878,
         map: this.pbr.gunmetal.map,
         normalMap: this.pbr.gunmetal.normalMap,
         normalScale: new THREE.Vector2(0.65, 0.65),
         roughnessMap: this.pbr.gunmetal.roughnessMap,
-        roughness: 0.66,
-        metalness: 0.72,
-        envMapIntensity: 0.55,
+        roughness: 0.56,
+        metalness: 0.58,
+        envMapIntensity: 0.95,
       }),
       rustMetal: new THREE.MeshStandardMaterial({
-        color: 0x613524,
+        color: 0x945c44,
         normalMap: this.pbr.gunmetal.normalMap,
         normalScale: new THREE.Vector2(0.75, 0.75),
-        roughness: 0.82,
-        metalness: 0.42,
-        envMapIntensity: 0.35,
+        roughness: 0.78,
+        metalness: 0.38,
+        envMapIntensity: 0.65,
       }),
       crate: new THREE.MeshStandardMaterial({
-        color: 0xb5bdb4,
+        color: 0xdce3d8,
         map: this.textures.crateMap,
         normalMap: this.pbr.gunmetal.normalMap,
         normalScale: new THREE.Vector2(0.6, 0.6),
-        roughness: 0.78,
-        metalness: 0.28,
-        envMapIntensity: 0.38,
+        roughness: 0.74,
+        metalness: 0.24,
+        envMapIntensity: 0.72,
       }),
       barrel: new THREE.MeshStandardMaterial({
-        color: 0xc8c2c0,
+        color: 0xe0d8d6,
         map: this.textures.barrelMap,
         normalMap: this.pbr.gunmetal.normalMap,
         normalScale: new THREE.Vector2(0.5, 0.5),
-        roughness: 0.58,
-        metalness: 0.52,
-        envMapIntensity: 0.52,
+        roughness: 0.54,
+        metalness: 0.46,
+        envMapIntensity: 0.78,
       }),
       blood: new THREE.MeshBasicMaterial({ color: 0x162436 }),
       spark: new THREE.MeshBasicMaterial({ color: 0xffb02e }),
@@ -1215,17 +1218,18 @@ export class IronAshEngine {
   }
 
   private initLighting(): void {
-    // Grounded Modern Warfare Overcast Stormy Seoul Lighting (rich shadow detail + cool skylight, zero whiteout!)
-    this.hemiLight = new THREE.HemisphereLight(0x88a8cf, 0x2c3442, 0.92);
+    // Luxurious Modern Warfare Overcast Silver-Dawn Seoul 3-Point Architectural Lighting
+    // Front-3/4 key sun illuminates player-facing facades, signboards, sandbags, tanks & robots clearly!
+    this.hemiLight = new THREE.HemisphereLight(0xc2d8f0, 0x5c6878, 1.55);
     this.scene.add(this.hemiLight);
 
-    this.sunLight = new THREE.DirectionalLight(0xc8daf0, 1.95);
-    this.sunLight.position.set(28, 66, -26);
+    this.sunLight = new THREE.DirectionalLight(0xf6ecdc, 2.55);
+    this.sunLight.position.set(34, 68, 28);
     this.sunLight.castShadow = !this.isSoftwareGl;
     this.sunLight.shadow.mapSize.set(this.isSoftwareGl ? 512 : 2048, this.isSoftwareGl ? 512 : 2048);
     this.sunLight.shadow.camera.near = 10;
-    this.sunLight.shadow.camera.far = 160;
-    const sc = 48;
+    this.sunLight.shadow.camera.far = 170;
+    const sc = 54;
     this.sunLight.shadow.camera.left = -sc;
     this.sunLight.shadow.camera.right = sc;
     this.sunLight.shadow.camera.top = sc;
@@ -1234,19 +1238,24 @@ export class IronAshEngine {
     this.sunLight.shadow.normalBias = 0.018;
     this.scene.add(this.sunLight);
 
-    // Warm urban fire-horizon rim light for crisp 3D silhouette separation on vehicles, walls & squads
-    const rimLight = new THREE.DirectionalLight(0xe09a68, 0.52);
-    rimLight.position.set(-42, 28, -46);
+    // Warm champagne-amber urban horizon rim light separating robots, vehicles & towers from the mist
+    const rimLight = new THREE.DirectionalLight(0xf0b884, 0.92);
+    rimLight.position.set(-38, 34, -44);
     this.scene.add(rimLight);
+
+    // Soft cool overcast skylight bounce fill so shaded facades retain rich sculptural detail
+    const fillLight = new THREE.DirectionalLight(0x94bce6, 0.58);
+    fillLight.position.set(-32, 26, 22);
+    this.scene.add(fillLight);
 
     // Occasional storm lightning directional flash
     this.lightningLight = new THREE.DirectionalLight(0xc2dcff, 0);
     this.lightningLight.position.set(-40, 80, -35);
     this.scene.add(this.lightningLight);
 
-    // Balanced MWIII upper-left key rim light illuminating Picatinny rails, engravings & ROK camo sleeve
-    this.viewmodelLight = new THREE.PointLight(0xc4d8f0, 0.62, 2.8, 1.0);
-    this.viewmodelLight.position.set(-0.24, 0.30, -0.34);
+    // Studio-calibrated MWIII weapon inspection key light illuminating rails, "필승" engraving & gloves
+    this.viewmodelLight = new THREE.PointLight(0xeef4fc, 1.35, 3.2, 0.85);
+    this.viewmodelLight.position.set(-0.28, 0.34, -0.30);
     this.camera.add(this.viewmodelLight);
 
     // Physically calibrated decay=1.4 dynamic muzzle & explosion point lights (real wall & asphalt illumination!)
@@ -2155,7 +2164,7 @@ export class IronAshEngine {
     this.jetFlybyCd = 19;
     this.audio.stopVoiceDub();
     this.audio.setHeliPresence(0);
-    this.renderer.toneMappingExposure = 1.02;
+    this.renderer.toneMappingExposure = 1.28;
     this.missionId = 1;
     this.missionStage = 'm1_landing';
     this.stageTimer = 0;
@@ -2285,21 +2294,21 @@ export class IronAshEngine {
       cit.terminalLight.intensity = 14.0;
       for (const em of cit.emissiveMeshes) em.visible = true;
     }
-    // Restore grounded Modern Warfare stormy overcast Seoul lighting & rain (no purple sci-fi tint!)
-    (this.scene.fog as THREE.FogExp2).color.setHex(0x111722);
-    (this.scene.fog as THREE.FogExp2).density = 0.0094;
-    (this.scene.background as THREE.Color).setHex(0x0b1018);
-    this.hemiLight.color.setHex(0x88a8cf);
-    this.hemiLight.groundColor.setHex(0x2c3442);
-    this.hemiLight.intensity = 0.92;
-    this.sunLight.color.setHex(0xc8daf0);
-    this.sunLight.intensity = 1.95;
-    (this.rainLines.material as THREE.LineBasicMaterial).opacity = 0.24;
+    // Restore luminous overcast silver-dawn Neo-Seoul lighting & mist (crisp visibility across all structures!)
+    (this.scene.fog as THREE.FogExp2).color.setHex(0x3f5064);
+    (this.scene.fog as THREE.FogExp2).density = 0.0056;
+    (this.scene.background as THREE.Color).setHex(0x324256);
+    this.hemiLight.color.setHex(0xc2d8f0);
+    this.hemiLight.groundColor.setHex(0x5c6878);
+    this.hemiLight.intensity = 1.55;
+    this.sunLight.color.setHex(0xf6ecdc);
+    this.sunLight.intensity = 2.55;
+    (this.rainLines.material as THREE.LineBasicMaterial).opacity = 0.2;
     if (this.worldRefs) {
-      this.worldRefs.skyDomeMat.uniforms.topColor.value.setHex(0x090e16);
-      this.worldRefs.skyDomeMat.uniforms.midColor.value.setHex(0x16202e);
-      this.worldRefs.skyDomeMat.uniforms.horizonColor.value.setHex(0x262e3a);
-      this.worldRefs.skyDomeMat.uniforms.glowColor.value.setHex(0x6b3228);
+      this.worldRefs.skyDomeMat.uniforms.topColor.value.setHex(0x223248);
+      this.worldRefs.skyDomeMat.uniforms.midColor.value.setHex(0x465d78);
+      this.worldRefs.skyDomeMat.uniforms.horizonColor.value.setHex(0x7c8ea3);
+      this.worldRefs.skyDomeMat.uniforms.glowColor.value.setHex(0xd99e72);
     }
 
     this.time = 0;
@@ -8849,9 +8858,9 @@ export class IronAshEngine {
     }
     this.isIndoors = indoors;
     this.exposureAdaptationPulse *= Math.exp(-3.4 * dt);
-    const targetExp = (indoors ? 0.96 : 1.02) + this.exposureAdaptationPulse;
+    const targetExp = (indoors ? 1.16 : 1.28) + this.exposureAdaptationPulse;
     this.currentExposure += (targetExp - this.currentExposure) * Math.min(1, dt * 3.2);
-    this.renderer.toneMappingExposure = Math.max(0.86, Math.min(1.12, this.currentExposure));
+    this.renderer.toneMappingExposure = Math.max(1.06, Math.min(1.42, this.currentExposure));
   }
 
   private updateAtmosphere(dt: number): void {
@@ -8934,38 +8943,38 @@ export class IronAshEngine {
     const endTheme = this.cinematic.getEndingTheme();
     if (dawnP > 0.001) {
       if (endTheme === 'symbiosis') {
-        this._c1.setHex(0x111722).lerp(this._c2.setHex(0x1b4d5c), dawnP);
+        this._c1.setHex(0x3f5064).lerp(this._c2.setHex(0x226474), dawnP);
         fog.color.copy(this._c1);
-        fog.density = 0.0094 * (1 - dawnP * 0.45);
-        (this.scene.background as THREE.Color).setHex(0x0a0d13).lerp(this._c2.setHex(0x0d2b3e), dawnP);
-        this.hemiLight.color.setHex(0x88a8cf).lerp(this._c2.setHex(0x7efce0), dawnP);
-        this.hemiLight.groundColor.setHex(0x2c3442).lerp(this._c2.setHex(0x1f5963), dawnP);
-        this.hemiLight.intensity = 0.92 + dawnP * 0.48;
-        this.sunLight.color.setHex(0xc8daf0).lerp(this._c2.setHex(0x9fffe8), dawnP);
-        this.sunLight.intensity = 1.95 + dawnP * 0.35;
+        fog.density = 0.0056 * (1 - dawnP * 0.42);
+        (this.scene.background as THREE.Color).setHex(0x324256).lerp(this._c2.setHex(0x133e54), dawnP);
+        this.hemiLight.color.setHex(0xc2d8f0).lerp(this._c2.setHex(0x88ffe8), dawnP);
+        this.hemiLight.groundColor.setHex(0x5c6878).lerp(this._c2.setHex(0x2c6d78), dawnP);
+        this.hemiLight.intensity = 1.55 + dawnP * 0.35;
+        this.sunLight.color.setHex(0xf6ecdc).lerp(this._c2.setHex(0xb4ffef), dawnP);
+        this.sunLight.intensity = 2.55 + dawnP * 0.3;
         if (this.worldRefs) {
           const u = this.worldRefs.skyDomeMat.uniforms;
-          u.topColor.value.setHex(0x090f19).lerp(this._c2.setHex(0x09243d), dawnP);
-          u.midColor.value.setHex(0x182434).lerp(this._c2.setHex(0x178b82), dawnP);
-          u.horizonColor.value.setHex(0x2d3847).lerp(this._c2.setHex(0x52f2c8), dawnP);
-          u.glowColor.value.setHex(0x88533e).lerp(this._c2.setHex(0x7efce0), dawnP);
+          u.topColor.value.setHex(0x223248).lerp(this._c2.setHex(0x0f3250), dawnP);
+          u.midColor.value.setHex(0x465d78).lerp(this._c2.setHex(0x1e9e96), dawnP);
+          u.horizonColor.value.setHex(0x7c8ea3).lerp(this._c2.setHex(0x64f6d4), dawnP);
+          u.glowColor.value.setHex(0xd99e72).lerp(this._c2.setHex(0x8efce4), dawnP);
         }
       } else if (endTheme === 'ascension') {
-        this._c1.setHex(0x111722).lerp(this._c2.setHex(0x2e0b10), dawnP);
+        this._c1.setHex(0x3f5064).lerp(this._c2.setHex(0x4a1a20), dawnP);
         fog.color.copy(this._c1);
-        fog.density = 0.0094 * (1 - dawnP * 0.22);
-        (this.scene.background as THREE.Color).setHex(0x0a0d13).lerp(this._c2.setHex(0x1a0608), dawnP);
-        this.hemiLight.color.setHex(0x88a8cf).lerp(this._c2.setHex(0xff9b54), dawnP);
-        this.hemiLight.groundColor.setHex(0x2c3442).lerp(this._c2.setHex(0x4d1014), dawnP);
-        this.hemiLight.intensity = 0.92 + dawnP * 0.42;
-        this.sunLight.color.setHex(0xc8daf0).lerp(this._c2.setHex(0xff5a36), dawnP);
-        this.sunLight.intensity = 1.95 + dawnP * 0.38;
+        fog.density = 0.0056 * (1 - dawnP * 0.2);
+        (this.scene.background as THREE.Color).setHex(0x324256).lerp(this._c2.setHex(0x2a0c10), dawnP);
+        this.hemiLight.color.setHex(0xc2d8f0).lerp(this._c2.setHex(0xffa968), dawnP);
+        this.hemiLight.groundColor.setHex(0x5c6878).lerp(this._c2.setHex(0x632024), dawnP);
+        this.hemiLight.intensity = 1.55 + dawnP * 0.28;
+        this.sunLight.color.setHex(0xf6ecdc).lerp(this._c2.setHex(0xff724c), dawnP);
+        this.sunLight.intensity = 2.55 + dawnP * 0.32;
         if (this.worldRefs) {
           const u = this.worldRefs.skyDomeMat.uniforms;
-          u.topColor.value.setHex(0x090f19).lerp(this._c2.setHex(0x140407), dawnP);
-          u.midColor.value.setHex(0x182434).lerp(this._c2.setHex(0x4a0f14), dawnP);
-          u.horizonColor.value.setHex(0x2d3847).lerp(this._c2.setHex(0xff5e1a), dawnP);
-          u.glowColor.value.setHex(0x88533e).lerp(this._c2.setHex(0xffc145), dawnP);
+          u.topColor.value.setHex(0x223248).lerp(this._c2.setHex(0x24090e), dawnP);
+          u.midColor.value.setHex(0x465d78).lerp(this._c2.setHex(0x681c22), dawnP);
+          u.horizonColor.value.setHex(0x7c8ea3).lerp(this._c2.setHex(0xff702e), dawnP);
+          u.glowColor.value.setHex(0xd99e72).lerp(this._c2.setHex(0xffca5a), dawnP);
         }
         this.ascensionArcCd -= dt;
         if (this.ascensionArcCd <= 0 && this.worldRefs) {
@@ -8983,33 +8992,33 @@ export class IronAshEngine {
           );
         }
       } else {
-        this._c1.setHex(0x111722).lerp(this._c2.setHex(0xdcb486), dawnP);
+        this._c1.setHex(0x3f5064).lerp(this._c2.setHex(0xe4c298), dawnP);
         fog.color.copy(this._c1);
-        fog.density = 0.0094 * (1 - dawnP * 0.52);
-        (this.scene.background as THREE.Color).setHex(0x0a0d13).lerp(this._c2.setHex(0x5a9be0), dawnP);
+        fog.density = 0.0056 * (1 - dawnP * 0.45);
+        (this.scene.background as THREE.Color).setHex(0x324256).lerp(this._c2.setHex(0x69a8e8), dawnP);
 
-        this.hemiLight.color.setHex(0x88a8cf).lerp(this._c2.setHex(0xbde2ff), dawnP);
-        this.hemiLight.groundColor.setHex(0x2c3442).lerp(this._c2.setHex(0xd99b66), dawnP);
-        this.hemiLight.intensity = 0.92 + dawnP * 0.45;
+        this.hemiLight.color.setHex(0xc2d8f0).lerp(this._c2.setHex(0xcceaff), dawnP);
+        this.hemiLight.groundColor.setHex(0x5c6878).lerp(this._c2.setHex(0xdfa672), dawnP);
+        this.hemiLight.intensity = 1.55 + dawnP * 0.35;
 
-        this.sunLight.color.setHex(0xc8daf0).lerp(this._c2.setHex(0xffe0a6), dawnP);
-        this.sunLight.intensity = 1.95 + dawnP * 0.45;
+        this.sunLight.color.setHex(0xf6ecdc).lerp(this._c2.setHex(0xffe6b8), dawnP);
+        this.sunLight.intensity = 2.55 + dawnP * 0.35;
 
         if (this.worldRefs) {
           const u = this.worldRefs.skyDomeMat.uniforms;
-          u.topColor.value.setHex(0x090f19).lerp(this._c2.setHex(0x286cc2), dawnP);
-          u.midColor.value.setHex(0x182434).lerp(this._c2.setHex(0x74b3e8), dawnP);
-          u.horizonColor.value.setHex(0x2d3847).lerp(this._c2.setHex(0xffc97d), dawnP);
-          u.glowColor.value.setHex(0x88533e).lerp(this._c2.setHex(0xffe9a8), dawnP);
+          u.topColor.value.setHex(0x223248).lerp(this._c2.setHex(0x3078cc), dawnP);
+          u.midColor.value.setHex(0x465d78).lerp(this._c2.setHex(0x82beef), dawnP);
+          u.horizonColor.value.setHex(0x7c8ea3).lerp(this._c2.setHex(0xffd28c), dawnP);
+          u.glowColor.value.setHex(0xd99e72).lerp(this._c2.setHex(0xffedb8), dawnP);
         }
       }
     } else if (this.relay1FogShift > 0) {
-      // Shift slightly deeper crimson-rust after Relay 1 falls
-      fog.color.lerp(this._c2.setHex(0x260d14), Math.min(1, dt * 0.65));
+      // Subtle atmospheric amber-slate storm tension after Relay 1 falls (keeps full structural readability!)
+      fog.color.lerp(this._c2.setHex(0x463d4a), Math.min(1, dt * 0.65));
       if (this.worldRefs) {
         const u = this.worldRefs.skyDomeMat.uniforms;
-        u.horizonColor.value.lerp(this._c2.setHex(0x6e1a18), Math.min(1, dt * 0.65));
-        u.glowColor.value.lerp(this._c2.setHex(0xd92626), Math.min(1, dt * 0.65));
+        u.horizonColor.value.lerp(this._c2.setHex(0x8c564c), Math.min(1, dt * 0.65));
+        u.glowColor.value.lerp(this._c2.setHex(0xe86842), Math.min(1, dt * 0.65));
       }
     }
 
@@ -9167,7 +9176,7 @@ export class IronAshEngine {
         Math.min(0.0045, this.shake * 0.0055);
       const targetChrom = 0.00065 + actionPulse;
       gu.uChromatic.value += (targetChrom - gu.uChromatic.value) * Math.min(1, dt * 12);
-      gu.uVignette.value = this.player.ads ? 0.36 : this.vatsActive ? 0.42 : 0.27;
+      gu.uVignette.value = this.player.ads ? 0.22 : this.vatsActive ? 0.28 : 0.14;
       const tint = gu.uTint.value as THREE.Vector3;
       if (dawnP > 0.05 && endTheme === 'dawn') {
         tint.set(1.04, 1.01, 0.94);
