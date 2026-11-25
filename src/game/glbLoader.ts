@@ -76,50 +76,58 @@ function buildPbrMaterialMap(
       envMapIntensity: 0.82,
     }),
     polymer: new THREE.MeshStandardMaterial({
-      color: 0x1a1e25,
-      normalMap: pbr.kevlarGlove.normalMap,
-      normalScale: new THREE.Vector2(0.42, 0.42),
-      roughness: 0.86,
-      metalness: 0.1,
-      envMapIntensity: 0.4,
+      color: 0x9aa4b2,
+      map: pbr.carbonArmor.map,
+      normalMap: pbr.carbonArmor.normalMap,
+      normalScale: new THREE.Vector2(0.75, 0.75),
+      roughnessMap: pbr.carbonArmor.roughnessMap,
+      aoMap: pbr.carbonArmor.aoMap,
+      aoMapIntensity: 0.85,
+      roughness: 0.72,
+      metalness: 0.28,
+      envMapIntensity: 0.65,
     }),
     chrome: new THREE.MeshStandardMaterial({
-      color: 0x9aa5b3,
-      roughness: 0.3,
-      metalness: 0.86,
-      envMapIntensity: 0.75,
+      color: 0xb2becb,
+      roughness: 0.22,
+      metalness: 0.92,
+      envMapIntensity: 1.1,
     }),
     brass: new THREE.MeshStandardMaterial({
-      color: 0xd4a23e,
-      roughness: 0.28,
-      metalness: 0.88,
-      envMapIntensity: 0.85,
+      color: 0xd8a844,
+      roughness: 0.24,
+      metalness: 0.9,
+      envMapIntensity: 1.05,
     }),
     copper_tip: new THREE.MeshStandardMaterial({
       color: 0xc96832,
-      roughness: 0.3,
-      metalness: 0.86,
-      envMapIntensity: 0.8,
+      roughness: 0.28,
+      metalness: 0.88,
+      envMapIntensity: 0.95,
     }),
     kevlar_glove: new THREE.MeshStandardMaterial({
-      color: 0xc4ccd4,
+      color: 0xc8d0d8,
       map: pbr.kevlarGlove.map,
       normalMap: pbr.kevlarGlove.normalMap,
-      normalScale: new THREE.Vector2(0.95, 0.95),
+      normalScale: new THREE.Vector2(1.05, 1.05),
       roughnessMap: pbr.kevlarGlove.roughnessMap,
-      roughness: 0.94,
-      metalness: 0.06,
+      roughness: 0.92,
+      metalness: 0.08,
       aoMap: pbr.kevlarGlove.aoMap,
       aoMapIntensity: 0.95,
-      envMapIntensity: 0.35,
+      envMapIntensity: 0.42,
     }),
     knuckle_carbon: new THREE.MeshStandardMaterial({
-      color: 0x252b34,
-      normalMap: pbr.kevlarGlove.normalMap,
-      normalScale: new THREE.Vector2(0.5, 0.5),
-      roughness: 0.52,
-      metalness: 0.48,
-      envMapIntensity: 0.45,
+      color: 0xbec8d6,
+      map: pbr.carbonArmor.map,
+      normalMap: pbr.carbonArmor.normalMap,
+      normalScale: new THREE.Vector2(1.0, 1.0),
+      roughnessMap: pbr.carbonArmor.roughnessMap,
+      aoMap: pbr.carbonArmor.aoMap,
+      aoMapIntensity: 0.9,
+      roughness: 0.44,
+      metalness: 0.56,
+      envMapIntensity: 0.85,
     }),
     // Real photographic ROK Special Forces granite-digital camo fabric on player forearms!
     suit_sleeve: new THREE.MeshStandardMaterial({
@@ -575,73 +583,93 @@ export function buildEnemyGlbRig(
   const isSyndicate = faction === Faction.SYNDICATE;
 
   const armorHex = isBoss
-    ? 0x3b414c
+    ? 0x8f98a6
     : isRaider
-      ? 0x7a5c46 // Weathered desert/urban tan-olive guerrilla vest
+      ? 0x9e8368 // Weathered desert/urban tan-olive tactical composite
       : isSyndicate
-        ? 0x3c4a62 // Dark obsidian-slate special forces plate carrier
-        : 0x454e5e; // OMNI titanium warframe
+        ? 0x7a8aa3 // Obsidian-slate carbon special forces armor
+        : 0x8d97a8; // OMNI brushed titanium warframe
 
-  const fabricHex = isRaider ? 0x625a4c : isSyndicate ? 0x2c3444 : 0x2d333d;
-  const plateHex = isBoss ? 0x7c2026 : isRaider ? 0x4d3c2e : isSyndicate ? 0x243048 : 0x5c222a;
-  const visorHex = isBoss ? 0xff2442 : isRaider ? 0xf59e0b : isSyndicate ? 0x38bdf8 : 0xff3048;
+  const fabricHex = isRaider ? 0x6f6556 : isSyndicate ? 0x3b4454 : 0x38404d;
+  const plateHex = isBoss ? 0x8e3b42 : isRaider ? 0x7e6b58 : isSyndicate ? 0x5c6d85 : 0x764c54;
+  const visorHex = isBoss ? 0xff3b4e : isRaider ? 0xe59a38 : isSyndicate ? 0x38bdf8 : 0xff4258;
 
   const charArmor = new THREE.MeshStandardMaterial({
     color: armorHex,
-    map: isMech ? pbr.gunmetal.map : pbr.rokCamo.map,
-    normalMap: isMech ? pbr.gunmetal.normalMap : pbr.rokCamo.normalMap,
-    normalScale: new THREE.Vector2(0.85, 0.85),
-    roughnessMap: isMech ? pbr.gunmetal.roughnessMap : pbr.rokCamo.roughnessMap,
-    roughness: isMech ? 0.56 : 0.78,
-    metalness: isMech ? 0.62 : 0.24,
-    envMapIntensity: 0.85,
+    map: isMech ? pbr.gunmetal.map : pbr.carbonArmor.map,
+    normalMap: isMech ? pbr.gunmetal.normalMap : pbr.carbonArmor.normalMap,
+    normalScale: new THREE.Vector2(0.95, 0.95),
+    roughnessMap: isMech ? pbr.gunmetal.roughnessMap : pbr.carbonArmor.roughnessMap,
+    aoMap: isMech ? pbr.gunmetal.aoMap : pbr.carbonArmor.aoMap,
+    aoMapIntensity: 0.9,
+    roughness: isMech ? 0.54 : 0.62,
+    metalness: isMech ? 0.72 : 0.48,
+    envMapIntensity: 1.05,
   });
   const charFabric = new THREE.MeshStandardMaterial({
     color: fabricHex,
     map: pbr.rokCamo.map,
     normalMap: pbr.rokCamo.normalMap,
-    normalScale: new THREE.Vector2(0.9, 0.9),
+    normalScale: new THREE.Vector2(0.95, 0.95),
     roughnessMap: pbr.rokCamo.roughnessMap,
-    roughness: 0.9,
+    aoMap: pbr.rokCamo.aoMap,
+    aoMapIntensity: 0.85,
+    roughness: 0.92,
     metalness: 0.06,
     envMapIntensity: 0.52,
   });
   const charPlate = new THREE.MeshStandardMaterial({
     color: plateHex,
-    map: pbr.gunmetal.map,
-    normalMap: pbr.gunmetal.normalMap,
-    normalScale: new THREE.Vector2(0.75, 0.75),
-    roughness: 0.52,
-    metalness: 0.66,
-    envMapIntensity: 0.88,
+    map: pbr.carbonArmor.map,
+    normalMap: pbr.carbonArmor.normalMap,
+    normalScale: new THREE.Vector2(0.92, 0.92),
+    roughnessMap: pbr.carbonArmor.roughnessMap,
+    aoMap: pbr.carbonArmor.aoMap,
+    aoMapIntensity: 0.9,
+    roughness: 0.48,
+    metalness: 0.68,
+    envMapIntensity: 1.0,
   });
   const gunmetal = new THREE.MeshStandardMaterial({
-    color: 0xb8c2ce,
+    color: 0xc8d2de,
     map: pbr.gunmetal.map,
     normalMap: pbr.gunmetal.normalMap,
-    roughness: 0.58,
-    metalness: 0.74,
-    envMapIntensity: 0.9,
+    roughnessMap: pbr.gunmetal.roughnessMap,
+    aoMap: pbr.gunmetal.aoMap,
+    aoMapIntensity: 0.85,
+    roughness: 0.52,
+    metalness: 0.78,
+    envMapIntensity: 1.05,
   });
   const darkSteel = new THREE.MeshStandardMaterial({
-    color: 0x2a313c,
-    roughness: 0.64,
-    metalness: 0.62,
-    envMapIntensity: 0.75,
+    color: 0x2d3540,
+    normalMap: pbr.gunmetal.normalMap,
+    roughness: 0.56,
+    metalness: 0.68,
+    envMapIntensity: 0.88,
   });
   const chrome = new THREE.MeshStandardMaterial({
-    color: 0x9aa6b4,
-    roughness: 0.28,
-    metalness: 0.88,
-    envMapIntensity: 0.95,
+    color: 0xb6c2d0,
+    roughness: 0.22,
+    metalness: 0.92,
+    envMapIntensity: 1.15,
   });
   const kevlar = new THREE.MeshStandardMaterial({
-    color: 0x252a32,
+    color: 0x2a303a,
+    normalMap: pbr.kevlarGlove.normalMap,
     roughness: 0.88,
-    metalness: 0.08,
-    envMapIntensity: 0.45,
+    metalness: 0.1,
+    envMapIntensity: 0.48,
   });
-  const visorMat = new THREE.MeshBasicMaterial({ color: visorHex });
+  // Photorealistic glossy recessed optical sensor glass (replaces bright cartoon neon plastic!)
+  const visorMat = new THREE.MeshStandardMaterial({
+    color: 0x0b1018,
+    emissive: visorHex,
+    emissiveIntensity: 1.05,
+    roughness: 0.08,
+    metalness: 0.42,
+    envMapIntensity: 1.35,
+  });
 
   const localMatMap: Record<string, THREE.Material> = {
     char_armor: charArmor,

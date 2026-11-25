@@ -40,9 +40,9 @@ export const StoryPrologue: React.FC<StoryPrologueProps> = ({ onDeploy, onClose 
 
   return (
     <div
-      className="fixed inset-0 z-40 flex flex-col justify-between px-5 py-5 sm:px-10 sm:py-7 pointer-events-auto surface-grain overflow-hidden"
+      className="fixed inset-0 z-40 flex flex-col justify-between px-5 py-5 sm:px-10 sm:py-7 pointer-events-auto overflow-hidden"
       style={{
-        background: `radial-gradient(ellipse 68% 54% at 72% 46%, ${beat.accentCss}1c 0%, transparent 66%), linear-gradient(128deg, rgba(7, 10, 16, 0.99) 0%, rgba(12, 16, 25, 0.98) 54%, rgba(16, 22, 33, 0.97) 100%)`,
+        background: `radial-gradient(ellipse 68% 54% at 72% 46%, ${beat.accentCss}18 0%, transparent 66%), linear-gradient(128deg, rgba(6, 9, 15, 0.98) 0%, rgba(11, 15, 24, 0.97) 54%, rgba(14, 19, 30, 0.96) 100%)`,
       }}
       role="dialog"
       aria-modal="true"
@@ -50,20 +50,20 @@ export const StoryPrologue: React.FC<StoryPrologueProps> = ({ onDeploy, onClose 
       data-testid="story-prologue"
     >
       {/* Top briefing bar */}
-      <div className="flex items-center justify-between gap-4 pb-3.5 border-b border-white/[0.09]">
+      <div className="flex items-center justify-between gap-4 pb-3.5 border-b border-white/[0.08]">
         <div className="flex items-center gap-3 text-xs font-tactical text-[#94a0b2] tabular-nums">
-          <span className="p-1.5 rounded-[3px] bg-white/[0.05] border border-white/[0.09] text-[#f5b342]">
+          <span className="p-1.5 rounded-full bg-white/[0.06] border border-white/[0.1] text-[#f5b342]">
             <HudGlyphIcon kind="holotape" size={14} />
           </span>
-          <span className="text-[#f3f5f8] font-bold tracking-[0.08em]">VAULT-00 작전 브리핑</span>
+          <span className="text-[#f3f5f8] font-bold tracking-[0.06em]">VAULT-00 작전 브리핑</span>
           <span aria-hidden="true" className="text-white/20">
             /
           </span>
           <span
-            className="px-2 py-0.5 rounded-[3px] font-bold border"
+            className="px-2.5 py-0.5 rounded-full font-bold border"
             style={{
               color: beat.accentCss,
-              borderColor: `${beat.accentCss}55`,
+              borderColor: `${beat.accentCss}45`,
               backgroundColor: `${beat.accentCss}14`,
             }}
           >
@@ -125,17 +125,17 @@ export const StoryPrologue: React.FC<StoryPrologueProps> = ({ onDeploy, onClose 
 
             {/* 3-Faction War Crest Strip on Beat 2 */}
             {beat.id === 'ai-factions' && (
-              <div className="flex flex-wrap items-center gap-4 pt-1">
-                <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-[4px] bg-white/[0.03] border border-white/[0.08] text-xs font-semibold text-[#f6b75e]">
-                  <FactionCrest faction={Faction.RAIDER} size={28} />
+              <div className="flex flex-wrap items-center gap-3 pt-1">
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/[0.09] text-xs font-semibold text-[#f6b75e]">
+                  <FactionCrest faction={Faction.RAIDER} size={26} />
                   <span>폐철 약탈기</span>
                 </div>
-                <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-[4px] bg-white/[0.03] border border-white/[0.08] text-xs font-semibold text-[#7ee6ff]">
-                  <FactionCrest faction={Faction.SYNDICATE} size={28} />
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/[0.09] text-xs font-semibold text-[#7ee6ff]">
+                  <FactionCrest faction={Faction.SYNDICATE} size={26} />
                   <span>이지스 신스</span>
                 </div>
-                <div className="flex items-center gap-2 px-2.5 py-1.5 rounded-[4px] bg-white/[0.03] border border-white/[0.08] text-xs font-semibold text-[#ff856d]">
-                  <FactionCrest faction={Faction.ROBOT} size={28} />
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/[0.09] text-xs font-semibold text-[#ff856d]">
+                  <FactionCrest faction={Faction.ROBOT} size={26} />
                   <span>에이펙스 수호기</span>
                 </div>
               </div>
@@ -143,7 +143,7 @@ export const StoryPrologue: React.FC<StoryPrologueProps> = ({ onDeploy, onClose 
 
             {/* Intercepted radio quote */}
             <blockquote
-              className="pl-4 py-2 pr-3 max-w-xl border-l-2 rounded-r-[4px] bg-white/[0.025]"
+              className="pl-4 py-2.5 pr-4 max-w-xl border-l-2 rounded-r-xl bg-white/[0.03]"
               style={{ borderColor: beat.accentCss }}
             >
               <p className="text-sm text-[#eef2f7] font-medium leading-relaxed break-keep">
@@ -155,91 +155,47 @@ export const StoryPrologue: React.FC<StoryPrologueProps> = ({ onDeploy, onClose 
             </blockquote>
           </div>
 
-          {/* High-Resolution Illustrated Viewport inside Machined Obsidian Frame */}
+          {/* High-Resolution Borderless Apple TV+ Cinema Briefing Frame */}
           <div className="md:col-span-6">
             <div
-              className="game-plaque tac-corners p-2.5"
+              className="relative w-full aspect-[16/9] rounded-2xl overflow-hidden border border-white/[0.12] bg-gradient-to-br from-[#141c29] via-[#0d121b] to-[#070a10]"
               style={{
-                boxShadow: `0 28px 64px -18px rgba(0,0,0,0.9), 0 0 38px -18px ${beat.accentCss}66`,
+                boxShadow: `0 32px 72px -18px rgba(0,0,0,0.88), 0 0 42px -20px ${beat.accentCss}55`,
               }}
             >
-              <div className="relative w-full aspect-[16/9] rounded-[3px] overflow-hidden border border-white/[0.1] bg-gradient-to-br from-[#161e2b] via-[#0e131b] to-[#080b11]">
-                {!imgBroken && (
-                  <img
-                    key={beat.imageUrl}
-                    src={beat.imageUrl}
-                    alt={beat.imageAlt}
-                    referrerPolicy="no-referrer"
-                    onError={() => setFailedImages((prev) => ({ ...prev, [beat.id]: true }))}
-                    className="w-full h-full object-cover object-center animate-ken-burns"
-                  />
-                )}
-
-                <div
-                  className="absolute inset-0 pointer-events-none"
-                  style={{
-                    background:
-                      'linear-gradient(180deg, rgba(8,11,17,0.34) 0%, rgba(8,11,17,0.02) 45%, rgba(8,11,17,0.88) 100%)',
-                  }}
+              {!imgBroken && (
+                <img
+                  key={beat.imageUrl}
+                  src={beat.imageUrl}
+                  alt={beat.imageAlt}
+                  referrerPolicy="no-referrer"
+                  onError={() => setFailedImages((prev) => ({ ...prev, [beat.id]: true }))}
+                  className="w-full h-full object-cover object-center animate-ken-burns"
                 />
+              )}
 
-                {/* Top-left live archive REC stamp */}
-                <div className="absolute top-3 left-3.5 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-[2px] bg-[#070a10]/80 border border-white/[0.12] text-[9.5px] font-tactical text-[#e2e8f0]">
-                  <span
-                    className="w-1.5 h-1.5 rounded-full animate-pulse"
-                    style={{ backgroundColor: beat.accentCss }}
-                  />
-                  <span>ARCHIVE FEED · 0{step + 1}</span>
-                </div>
+              <div
+                className="absolute inset-0 pointer-events-none"
+                style={{
+                  background:
+                    'linear-gradient(180deg, rgba(7,10,16,0.28) 0%, rgba(7,10,16,0.02) 48%, rgba(7,10,16,0.86) 100%)',
+                }}
+              />
 
-                {/* Subtle architectural corner marks + optical dial */}
-                <svg
-                  viewBox="0 0 640 360"
-                  className="absolute inset-0 w-full h-full pointer-events-none"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M16 40 L16 16 L40 16 M600 16 L624 16 L624 40 M16 320 L16 344 L40 344 M600 344 L624 344 L624 320"
-                    fill="none"
-                    stroke={beat.accentCss}
-                    strokeWidth="1.8"
-                    strokeOpacity="0.72"
-                  />
-                  <g transform="translate(580, 56)">
-                    <g className="animate-spin-slow">
-                      <circle
-                        cx="0"
-                        cy="0"
-                        r="22"
-                        fill="none"
-                        stroke={beat.accentCss}
-                        strokeOpacity="0.58"
-                        strokeWidth="1.4"
-                        strokeDasharray="7 5"
-                      />
-                    </g>
-                    <g className="animate-spin-rev">
-                      <circle
-                        cx="0"
-                        cy="0"
-                        r="12"
-                        fill="none"
-                        stroke="#e2e8f0"
-                        strokeOpacity="0.45"
-                        strokeWidth="1.2"
-                        strokeDasharray="3 4"
-                      />
-                    </g>
-                    <circle cx="0" cy="0" r="2.6" fill={beat.accentCss} />
-                  </g>
-                </svg>
+              {/* Top-left live archive REC pill */}
+              <div className="absolute top-3.5 left-4 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#070a12]/72 backdrop-blur-md border border-white/[0.12] text-[10px] font-tactical text-[#e2e8f0]">
+                <span
+                  className="w-1.5 h-1.5 rounded-full animate-pulse"
+                  style={{ backgroundColor: beat.accentCss }}
+                />
+                <span>ARCHIVE · 0{step + 1}</span>
+              </div>
 
-                <div className="absolute bottom-3 left-4 right-4 flex items-center justify-between gap-3 text-[11px] font-tactical tabular-nums game-text-outline">
-                  <span className="text-[#f3f5f8] font-semibold truncate">{beat.locationLabel}</span>
-                  <span className="shrink-0 font-bold" style={{ color: beat.accentCss }}>
-                    {beat.radLevel}
-                  </span>
-                </div>
+              <div className="absolute bottom-3.5 left-4 right-4 flex items-center justify-between gap-3 text-[11px] font-tactical tabular-nums game-text-outline">
+                <span className="text-[#f3f5f8] font-semibold truncate">{beat.locationLabel}</span>
+                <span className="shrink-0 font-bold" style={{ color: beat.accentCss }}>
+                  {beat.radLevel}
+                </span>
               </div>
             </div>
           </div>
@@ -247,7 +203,7 @@ export const StoryPrologue: React.FC<StoryPrologueProps> = ({ onDeploy, onClose 
       </div>
 
       {/* Bottom Interactive Chapter Stepper & Navigation */}
-      <div className="flex flex-wrap items-center justify-between gap-4 pt-3.5 border-t border-white/[0.09]">
+      <div className="flex flex-wrap items-center justify-between gap-4 pt-3.5 border-t border-white/[0.08]">
         <div className="flex items-center gap-1.5 flex-wrap">
           {PROLOGUE_BEATS.map((b, idx) => {
             const active = idx === step;
@@ -256,10 +212,10 @@ export const StoryPrologue: React.FC<StoryPrologueProps> = ({ onDeploy, onClose 
                 key={b.id}
                 type="button"
                 onClick={() => setStep(idx)}
-                className={`group flex items-center gap-2 px-2.5 py-1.5 rounded-[3px] border text-[10.5px] font-tactical transition-all duration-200 cursor-pointer ${
+                className={`group flex items-center gap-2 px-3 py-1.5 rounded-full border text-[10.5px] font-tactical transition-all duration-200 cursor-pointer ${
                   active
-                    ? 'bg-white/[0.09] border-white/30 text-[#f8fafc]'
-                    : 'bg-white/[0.02] border-white/[0.07] text-[#8494aa] hover:text-[#dce4ef] hover:border-white/20'
+                    ? 'bg-white/[0.12] border-white/25 text-[#f8fafc]'
+                    : 'bg-white/[0.03] border-white/[0.07] text-[#8494aa] hover:text-[#dce4ef] hover:border-white/20'
                 }`}
                 aria-label={`${idx + 1}번 브리핑으로 이동: ${b.title}`}
               >

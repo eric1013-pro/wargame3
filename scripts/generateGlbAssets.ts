@@ -345,7 +345,7 @@ function buildHighPolyM41X(mats: NamedMats): THREE.Group {
   boltCarrier.position.set(0.048, 0.024, -0.05);
   root.add(boltCarrier);
 
-  // Side PEQ-15 Tactical Laser Module
+  // Side PEQ-15 Tactical Laser Module + Pressure Switch + Angled Vertical Foregrip (MWIII silhouette!)
   const peq = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.024, 0.115), mats.polymer);
   peq.position.set(0.056, 0.02, -0.44);
   root.add(peq);
@@ -353,6 +353,17 @@ function buildHighPolyM41X(mats: NamedMats): THREE.Group {
   peqLens.rotation.x = Math.PI / 2;
   peqLens.position.set(0.056, 0.02, -0.50);
   root.add(peqLens);
+  const pressurePad = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.008, 0.072), mats.polymer);
+  pressurePad.position.set(0, 0.084, -0.36);
+  root.add(pressurePad);
+  const angledGrip = new THREE.Mesh(new THREE.BoxGeometry(0.036, 0.088, 0.044), mats.polymer);
+  angledGrip.position.set(0, -0.058, -0.41);
+  angledGrip.rotation.x = -0.24;
+  root.add(angledGrip);
+  // Flip-up backup iron sight behind suppressor
+  const frontPost = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.032, 0.024), mats.darkSteel);
+  frontPost.position.set(0, 0.088, -0.60);
+  root.add(frontPost);
 
   // Articulated Left-Side Knurled Charging Handle (animated on chambering)
   const chargingHandle = new THREE.Group();
@@ -1665,7 +1676,7 @@ function buildHighPolyEnemyTrooper(mats: NamedMats): THREE.Group {
   helmetRim.position.set(0, 0.02, -0.01);
   head.add(helmetRim);
 
-  // Dual-tube flipped-up tactical NVG binoculars on helmet brow
+  // Dual-tube flipped-up tactical NVG binoculars on helmet brow + Peltor ComTac ear-pro headsets
   const nvgBridge = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.045, 0.065), mats.darkSteel);
   nvgBridge.position.set(0, 0.13, 0.12);
   head.add(nvgBridge);
@@ -1675,6 +1686,19 @@ function buildHighPolyEnemyTrooper(mats: NamedMats): THREE.Group {
     tube.position.set(nx, 0.135, 0.165);
     head.add(tube);
   }
+  for (const ex of [-0.148, 0.148]) {
+    const earCup = new THREE.Mesh(new THREE.CylinderGeometry(0.046, 0.042, 0.042, 12), mats.charPlate);
+    earCup.rotation.z = Math.PI / 2;
+    earCup.position.set(ex, -0.015, 0.0);
+    head.add(earCup);
+    const railMount = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.045, 0.088), mats.darkSteel);
+    railMount.position.set(ex * 0.96, 0.042, -0.01);
+    head.add(railMount);
+  }
+  // Tactical throat mic / collar guard around neck
+  const gorget = new THREE.Mesh(new THREE.CylinderGeometry(0.138, 0.162, 0.075, 14), mats.charPlate);
+  gorget.position.set(0, -0.14, 0.01);
+  head.add(gorget);
 
   // Sleek recessed razor-thin glowing ballistic goggle slit (NOT a giant oval eye!)
   const goggleFrame = new THREE.Mesh(new THREE.BoxGeometry(0.205, 0.068, 0.06), mats.darkSteel);
@@ -1858,6 +1882,15 @@ function buildHighPolyEnemyMech(mats: NamedMats): THREE.Group {
     const shoulderPod = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.22, 0.34), mats.charPlate);
     shoulderPod.position.set(sx * 2.15, 0.42, -0.05);
     torso.add(shoulderPod);
+    // Hydraulic titanium shoulder actuator strut + exhaust louvers
+    const hydroStrut = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.42, 10), mats.chrome);
+    hydroStrut.position.set(sx * 1.48, 0.26, -0.18);
+    hydroStrut.rotation.z = sx * 0.35;
+    torso.add(hydroStrut);
+    const collarFin = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.24, 0.28), mats.darkSteel);
+    collarFin.position.set(sx * 1.15, 0.42, 0.04);
+    collarFin.rotation.z = sx * -0.22;
+    torso.add(collarFin);
   }
 
   // Glowing Chest Reactor Core (`CoreWeakpoint`) + 3 Detachable Beveled Boss Armor Plates!

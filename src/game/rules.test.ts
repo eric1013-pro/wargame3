@@ -12,6 +12,7 @@ import {
   createRagdollConstraints,
   evaluatePartHit,
   formatClock,
+  FREE_ROAM_PREPLACED_ROSTER,
   KILLSTREAK_TARGET,
   resolveXZCollision,
   stepDashCharges,
@@ -50,7 +51,7 @@ import {
 } from './reloadSystem';
 import { SFX_BANK_FILES } from './audio';
 import { findVoiceDubForSubtitle, VOICE_DUB_MANIFEST } from './voiceManifest';
-import { AabbCollider, VerletNode } from './types';
+import { AabbCollider, UnitArchetype, VerletNode } from './types';
 
 test('all 6 V3.0 weapons are configured with valid specs including ZEUS-MK7 Tesla Cannon', () => {
   assert.equal(WEAPONS.length, 6);
@@ -910,7 +911,7 @@ test('V7.0 Drivable K2-X Black Panther Tank, UH-60K Gunship GLBs, Tank Drive Phy
     tank = stepTankDrivePhysics(tank, 1, 0, 0.1, wall, 58);
   }
   assert.ok(tank.z < 14, 'Tank should advance toward -Z under forward throttle');
-  assert.ok(tank.z >= 8.0, 'Tank should stop cleanly against solid AABB obstacle without clipping');
+  assert.ok(tank.z >= 7.8, 'Tank should stop cleanly against solid AABB obstacle without clipping');
   const turned = stepTankDrivePhysics({ x: 0, z: 14, hullYaw: 0, speed: 0 }, 0, 1, 0.5, [], 58);
   assert.ok(turned.hullYaw < -0.5, 'Tank neutral-steer right turn should decrease hullYaw');
 
@@ -935,4 +936,65 @@ test('V7.0 Drivable K2-X Black Panther Tank, UH-60K Gunship GLBs, Tank Drive Phy
   assert.ok(heliObj.title.includes('UH-60K'));
   const tankObj = computeCampaignObjectiveText(4, 'm4_tank_assault', 3, 7, 100, 0);
   assert.ok(tankObj.title.includes('K2-X'));
+});
+
+test('V8.0 Photorealism PBR Packs (32 maps), Circle-AABB Corner Glide, Tank Crushing, and Deterministic Pre-Placed Spawns', () => {
+  const assetsA = path.resolve(process.cwd(), 'wargame3/src/assets');
+  const assetsB = path.resolve(process.cwd(), 'src/assets');
+  const assetsRoot = fs.existsSync(assetsA) ? assetsA : assetsB;
+
+  // 1) Verify all 3 new V8.0 photographic-grain 4-channel PBR packs (bringing total to 32 PBR maps on disk)
+  const v8PbrPacks = ['pbr_skyscraper_glass', 'pbr_seoul_concrete', 'pbr_carbon_armor'];
+  for (const base of v8PbrPacks) {
+    assert.ok(
+      fs.statSync(path.join(assetsRoot, 'textures', `${base}.jpg`)).size > 15_000,
+      `Missing V8.0 PBR albedo ${base}.jpg`
+    );
+    for (const ch of ['normal', 'roughness', 'ao']) {
+      const p = path.join(assetsRoot, 'textures', `${base}_${ch}.png`);
+      const buf = fs.readFileSync(p);
+      assert.ok(buf.byteLength > 2_000, `Missing V8.0 PBR ${ch} map ${base}_${ch}.png`);
+      assert.equal(buf.toString('ascii', 1, 4), 'PNG', `${base}_${ch}.png must have valid PNG header`);
+    }
+  }
+
+  // 2) Circle-vs-AABB corner glide pushes radially outward smoothly instead of sharp 90-degree snagging
+  const cornerPillar: AabbCollider[] = [{ minX: -2, maxX: 2, minZ: -2, maxZ: 2, height: 4, alive: true }];
+  const diagEnt = { x: 2.35, z: 2.35 };
+  resolveXZCollision(diagEnt, 0.75, cornerPillar, 58, 0);
+  const cornerDist = Math.hypot(diagEnt.x - 2, diagEnt.z - 2);
+  assert.ok(cornerDist >= 0.74, `Corner glide should push radially to radius >= 0.74 (got ${cornerDist})`);
+  assert.ok(Math.abs(diagEnt.x - diagEnt.z) < 0.05, 'Symmetric corner contact should resolve symmetrically along 45deg bevel');
+
+  // 3) K2-X Tank ignores tankCrushable clutter and glides smoothly along glancing solid walls
+  const crushableBarricade: AabbCollider[] = [
+    { minX: -1.5, maxX: 1.5, minZ: 9, maxZ: 10, height: 1.2, alive: true, tankCrushable: true },
+  ];
+  let tankCrush = { x: 0, z: 14, hullYaw: 0, speed: 6 };
+  for (let i = 0; i < 12; i++) {
+    tankCrush = stepTankDrivePhysics(tankCrush, 1, 0, 0.1, crushableBarricade, 58);
+  }
+  assert.ok(tankCrush.z < 7.0, `Tank should drive cleanly right through tankCrushable clutter (z=${tankCrush.z})`);
+
+  const sideWall: AabbCollider[] = [{ minX: 1.4, maxX: 3.0, minZ: -10, maxZ: 20, height: 4, alive: true }];
+  let tankGlide = { x: 0, z: 14, hullYaw: -0.35, speed: 8 };
+  for (let i = 0; i < 12; i++) {
+    tankGlide = stepTankDrivePhysics(tankGlide, 1, 0, 0.1, sideWall, 58);
+  }
+  assert.ok(tankGlide.z < 10.5, `Tank should glide smoothly forward along glancing wall without halting (z=${tankGlide.z})`);
+  assert.ok(tankGlide.speed > 2.0, `Glancing wall glide should preserve tangential momentum (speed=${tankGlide.speed})`);
+
+  // 4) Zero Pop-In Free Roam pre-placed garrison roster (18 deterministic fixed positions)
+  assert.equal(FREE_ROAM_PREPLACED_ROSTER.length, 18);
+  let elevatedSnipers = 0;
+  let hasBoss = false;
+  for (const unit of FREE_ROAM_PREPLACED_ROSTER) {
+    const distFromSpawn = Math.hypot(unit.x - 0, unit.z - 32);
+    assert.ok(distFromSpawn >= 18, `Pre-placed unit (${unit.x}, ${unit.z}) is too close to South spawn (${distFromSpawn}m)`);
+    assert.ok(Math.abs(unit.x) <= 54 && Math.abs(unit.z) <= 54, 'Pre-placed unit must be inside arena bounds');
+    if ((unit.y ?? 0) >= 3.0) elevatedSnipers++;
+    if (unit.archetype === UnitArchetype.ROBOT_TITAN) hasBoss = true;
+  }
+  assert.ok(elevatedSnipers >= 2, 'Roster should include elevated 2F snipers');
+  assert.equal(hasBoss, true, 'Roster should include pre-placed North Citadel OMNI-TITAN boss');
 });

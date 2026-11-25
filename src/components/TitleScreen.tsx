@@ -253,25 +253,28 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
 
       <div className="fixed inset-0 -z-10 pointer-events-none cinema-film-grain" aria-hidden="true" />
 
-      {/* TOP COMMAND BAR: Brand Crest + Refined Glass Navigation + Utility Controls */}
+      {/* TOP COMMAND BAR: Apple Frosted Glass Pill Navigation + Minimal Utility Controls */}
       <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-4 sm:gap-6 flex-wrap">
-          {/* Compact Geometric Brand Stamp */}
+        <div className="flex items-center gap-3.5 sm:gap-5 flex-wrap">
+          {/* Minimal Apple-Craft Brand Mark */}
           <button
             type="button"
             onClick={() => onTabChange('deploy')}
-            className="hidden md:inline-flex items-center gap-2 pr-4 border-r border-white/[0.12] cursor-pointer group"
+            className="hidden md:inline-flex items-center gap-2.5 pr-1 cursor-pointer group"
             aria-label="작전 본부로 이동"
           >
-            <span className="w-6 h-6 rounded-[3px] bg-[#ff4422]/15 border border-[#ff4422]/60 flex items-center justify-center font-display text-xs font-extrabold text-[#ff6242] group-hover:bg-[#ff4422] group-hover:text-white transition-colors">
+            <span className="w-7 h-7 rounded-lg bg-white text-[#090d16] flex items-center justify-center font-display text-xs font-extrabold shadow-md group-hover:scale-105 transition-transform">
               III
             </span>
-            <span className="font-display text-sm font-bold tracking-[0.16em] text-[#eef2f8]">
+            <span className="font-display text-[15px] font-bold tracking-[0.14em] text-[#f8fafc] game-text-outline">
               IRON ASH
             </span>
           </button>
 
-          <nav className="flex items-center gap-5 sm:gap-7 flex-wrap" aria-label="메인 메뉴">
+          <nav
+            className="flex items-center gap-1 p-1 rounded-full bg-[#0b101a]/62 backdrop-blur-2xl border border-white/[0.11] shadow-[0_12px_32px_rgba(0,0,0,0.45)]"
+            aria-label="메인 메뉴"
+          >
             {(
               [
                 { id: 'deploy', label: '작전 본부' },
@@ -290,19 +293,13 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                     e.currentTarget.blur();
                     onTabChange(item.id);
                   }}
-                  className={`relative py-2 text-xs sm:text-[13px] font-bold tracking-wider transition-colors duration-200 cursor-pointer whitespace-nowrap game-text-outline ${
-                    active ? 'text-[#ffffff]' : 'text-[#9aa8bd] hover:text-[#f8fafc]'
+                  className={`px-3.5 py-1.5 rounded-full text-xs sm:text-[13px] font-semibold tracking-tight transition-all duration-200 cursor-pointer whitespace-nowrap ${
+                    active
+                      ? 'bg-white text-[#090d16] shadow-[0_4px_14px_rgba(255,255,255,0.22)]'
+                      : 'text-[#cbd5e1] hover:text-white hover:bg-white/[0.08]'
                   }`}
                 >
-                  <span>{item.label}</span>
-                  <span
-                    className="absolute left-0 right-0 bottom-0 h-[2px] transition-all duration-200"
-                    style={{
-                      backgroundColor: '#ff4422',
-                      opacity: active ? 1 : 0,
-                      transform: active ? 'scaleX(1)' : 'scaleX(0.2)',
-                    }}
-                  />
+                  {item.label}
                 </button>
               );
             })}
@@ -482,25 +479,25 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
               도어건너 & AC-130 FLIR, 그리고 <span className="text-[#f6b75e] font-semibold">K2-X 흑표 전차</span> 최후 돌파전.
             </p>
 
-            {/* Ultra-Clean Overwatch / CoD Vertical Launch Menu */}
-            <div className="flex flex-col gap-2.5 max-w-md">
+            {/* Apple / Toss × CoD MWIII Ultra-Clean Launch Stack */}
+            <div className="flex flex-col gap-3 max-w-[456px]">
               <GameButton
                 variant="primary"
                 size="lg"
                 fullWidth
                 data-start="true"
                 onClick={() => onStart('campaign', 1)}
-                className="h-12 justify-between px-5"
+                className="h-[52px] !rounded-[14px] justify-between px-5"
               >
-                <span className="inline-flex items-center gap-2 font-bold tracking-wide">
+                <span className="inline-flex items-center gap-2.5 text-[15px] font-bold tracking-tight">
                   <HudGlyphIcon kind="play" size={14} />
                   <span>캠페인 1화부터 출격</span>
                 </span>
                 <Keycap size="xs">ENTER</Keycap>
               </GameButton>
 
-              {/* Direct 4-Mission Key-Art Briefing & Launch Strip */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" data-testid="mission-select-strip">
+              {/* Sleek Apple/Toss Rounded-XL 4-Mission Visual Card Strip */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5" data-testid="mission-select-strip">
                 {CAMPAIGN_MISSIONS.map((m) => (
                   <button
                     key={m.id}
@@ -514,32 +511,31 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                         onStart('campaign', m.id);
                       }
                     }}
-                    className="group relative overflow-hidden text-left rounded-[5px] bg-[#0a0f18]/88 hover:bg-[#111927] border border-white/15 hover:border-white/65 hover:-translate-y-0.5 transition-all duration-200 cursor-pointer shadow-[0_8px_20px_rgba(0,0,0,0.5)]"
-                    style={{ borderTop: `2px solid ${m.accentCss}` }}
+                    className="group relative overflow-hidden text-left rounded-xl bg-[#0b101b]/75 backdrop-blur-xl hover:bg-[#131b2c]/90 border border-white/[0.12] hover:border-white/45 hover:-translate-y-1 transition-all duration-250 cursor-pointer shadow-[0_12px_28px_rgba(0,0,0,0.52)]"
                     title={`${m.title} — 클릭하여 브리핑 및 무장 설정`}
                   >
-                    <div className="relative h-14 w-full overflow-hidden bg-[#060910]">
+                    <div className="relative h-16 w-full overflow-hidden bg-[#060910]">
                       <img
                         src={m.keyArtUrl}
                         alt={m.title}
-                        className="w-full h-full object-cover object-center opacity-85 group-hover:opacity-100 group-hover:scale-105 transition-all duration-300"
+                        className="w-full h-full object-cover object-center opacity-88 group-hover:opacity-100 group-hover:scale-108 transition-all duration-400"
                       />
                       <div
                         className="absolute inset-0"
                         style={{
                           background:
-                            'linear-gradient(180deg, rgba(6,9,16,0.10) 0%, rgba(10,15,24,0.90) 100%)',
+                            'linear-gradient(180deg, rgba(6,9,16,0.08) 0%, rgba(11,16,27,0.92) 100%)',
                         }}
                       />
-                      <div
-                        className="absolute top-1 left-1.5 font-tactical text-[9px] font-bold tracking-[0.14em] px-1 py-0.5 rounded-[2px] bg-black/70"
+                      <span
+                        className="absolute top-1.5 left-1.5 font-tactical text-[9px] font-bold tracking-[0.12em] px-1.5 py-0.5 rounded-full bg-black/65 backdrop-blur-md border border-white/10"
                         style={{ color: m.accentCss }}
                       >
                         M0{m.id}
-                      </div>
+                      </span>
                     </div>
-                    <div className="px-2 py-1.5">
-                      <div className="text-[11px] font-semibold text-[#f1f5f9] leading-tight truncate">
+                    <div className="px-2.5 py-2">
+                      <div className="text-[11.5px] font-semibold text-[#f8fafc] tracking-tight leading-tight truncate">
                         {m.id === 1
                           ? '한강 상륙'
                           : m.id === 2
@@ -560,6 +556,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                   fullWidth
                   data-testid="campaign-briefing-btn"
                   onClick={onOpenPrologue}
+                  className="h-11 !rounded-xl"
                 >
                   스토리 브리핑
                 </GameButton>
@@ -570,7 +567,7 @@ export const TitleScreen: React.FC<TitleScreenProps> = ({
                   fullWidth
                   data-testid="freeroam-start-btn"
                   onClick={() => onStart('freeroam')}
-                  className="!border-[#f5b342]/45 !text-[#f6b75e] hover:!border-[#f5b342]"
+                  className="h-11 !rounded-xl !border-[#f5b342]/35 !text-[#fde6b8] hover:!border-[#f5b342]/75"
                 >
                   프리롬 워존 ★5
                 </GameButton>

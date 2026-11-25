@@ -3,6 +3,7 @@ import {
   BodyPart,
   Faction,
   StyleGrade,
+  UnitArchetype,
   VerletLink,
   VerletNode,
   VerletStepResult,
@@ -305,7 +306,8 @@ export function resolveXZCollision(
   radius: number,
   colliders: readonly AabbCollider[],
   arenaHalf = ARENA_HALF_SIZE,
-  feetY = 0
+  feetY = 0,
+  skipTankCrushable = false
 ): void {
   const lim = arenaHalf - 1.4 - radius;
   const clampArena = () => {
@@ -316,32 +318,45 @@ export function resolveXZCollision(
   };
   clampArena();
 
-  // 2-pass iterative AABB separation prevents corner-pinch push-through into adjacent obstacles
-  for (let pass = 0; pass < 2; pass++) {
+  const rSq = radius * radius;
+
+  // 3-pass True Circle-vs-AABB closest-point separation:
+  // Eliminates sharp 90° Minkowski corner snagging so player & K2-X Tank glide smoothly around every corner!
+  for (let pass = 0; pass < 3; pass++) {
     let moved = false;
     for (let i = 0; i < colliders.length; i++) {
       const c = colliders[i];
       if (!c.alive) continue;
-      // Skip obstacles strictly below our current standing elevation (e.g. standing on 2F above 1F cover),
-      // without allowing mid-air jump clipping inside ground barriers!
+      if (skipTankCrushable && c.tankCrushable) continue;
+      // Skip obstacles strictly below our current standing elevation (e.g. standing on 2F above 1F cover)
       if (feetY >= c.height - 0.12) continue;
       // Skip elevated obstacles strictly above our head (e.g. walking on 1F below a 2F parapet)
       if (c.minY !== undefined && feetY + 1.65 <= c.minY) continue;
-      if (
-        ent.x > c.minX - radius &&
-        ent.x < c.maxX + radius &&
-        ent.z > c.minZ - radius &&
-        ent.z < c.maxZ + radius
-      ) {
-        const dl = Math.abs(ent.x - (c.minX - radius));
-        const dr = Math.abs(c.maxX + radius - ent.x);
-        const dt = Math.abs(ent.z - (c.minZ - radius));
-        const db = Math.abs(c.maxZ + radius - ent.z);
-        const m = Math.min(dl, dr, dt, db);
-        if (m === dl) ent.x = c.minX - radius;
-        else if (m === dr) ent.x = c.maxX + radius;
-        else if (m === dt) ent.z = c.minZ - radius;
-        else ent.z = c.maxZ + radius;
+
+      const closestX = Math.max(c.minX, Math.min(ent.x, c.maxX));
+      const closestZ = Math.max(c.minZ, Math.min(ent.z, c.maxZ));
+      const dx = ent.x - closestX;
+      const dz = ent.z - closestZ;
+      const distSq = dx * dx + dz * dz;
+
+      if (distSq < rSq) {
+        if (distSq > 1e-8) {
+          const dist = Math.sqrt(distSq);
+          const push = radius - dist;
+          ent.x += (dx / dist) * push;
+          ent.z += (dz / dist) * push;
+        } else {
+          // Center strictly inside AABB: push cleanly out of nearest face
+          const dl = Math.abs(ent.x - (c.minX - radius));
+          const dr = Math.abs(c.maxX + radius - ent.x);
+          const dt = Math.abs(ent.z - (c.minZ - radius));
+          const db = Math.abs(c.maxZ + radius - ent.z);
+          const m = Math.min(dl, dr, dt, db);
+          if (m === dl) ent.x = c.minX - radius;
+          else if (m === dr) ent.x = c.maxX + radius;
+          else if (m === dt) ent.z = c.minZ - radius;
+          else ent.z = c.maxZ + radius;
+        }
         moved = true;
       }
     }
@@ -821,7 +836,7 @@ export interface TankDriveState {
 
 /**
  * Pure heavy-armored K2-X Black Panther tank drive kinematics (faces -Z at hullYaw=0,
- * supports dual-track neutral steering + AABB obstacle resolution).
+ * supports dual-track neutral steering, smooth glancing wall-glide, and ignores crushable street clutter).
  */
 export function stepTankDrivePhysics(
   state: TankDriveState,
@@ -831,11 +846,11 @@ export function stepTankDrivePhysics(
   colliders: readonly AabbCollider[],
   arenaHalf = ARENA_HALF_SIZE
 ): TankDriveState {
-  const maxFwd = 12.6; // ~45 km/h urban combat speed
-  const maxRev = -6.8;
-  const accel = 16.5;
-  const decel = 14.0;
-  const turnRate = 1.28;
+  const maxFwd = 13.8; // ~50 km/h urban combat speed
+  const maxRev = -7.6;
+  const accel = 19.5;
+  const decel = 15.0;
+  const turnRate = 1.52;
 
   // Invert turn when reversing for intuitive armored vehicle steering (W/S/A/D)
   const steerSign = state.speed < -0.5 ? -1 : 1;
@@ -845,26 +860,79 @@ export function stepTankDrivePhysics(
   if (fwdInput > 0) {
     speed = Math.min(maxFwd, speed + accel * dt);
   } else if (fwdInput < 0) {
-    speed = Math.max(maxRev, speed - accel * 0.9 * dt);
+    speed = Math.max(maxRev, speed - accel * 0.92 * dt);
   } else {
     if (Math.abs(speed) <= decel * dt) speed = 0;
     else speed -= Math.sign(speed) * decel * dt;
   }
 
+  const fwdX = -Math.sin(hullYaw);
+  const fwdZ = -Math.cos(hullYaw);
   const pos = {
-    x: state.x - Math.sin(hullYaw) * speed * dt,
-    z: state.z - Math.cos(hullYaw) * speed * dt,
+    x: state.x + fwdX * speed * dt,
+    z: state.z + fwdZ * speed * dt,
   };
   const preX = pos.x;
   const preZ = pos.z;
-  resolveXZCollision(pos, 2.05, colliders, arenaHalf, 0);
-  // Dampen forward speed cleanly on solid wall contact
-  if (Math.hypot(pos.x - preX, pos.z - preZ) > 0.08) {
-    speed *= 0.35;
+  // Tighter 1.85m bevel radius + skipTankCrushable = true so 55-ton tank smoothly glides around buildings & crushes clutter!
+  resolveXZCollision(pos, 1.85, colliders, arenaHalf, 0, true);
+  const pushX = pos.x - preX;
+  const pushZ = pos.z - preZ;
+  const pushMag = Math.hypot(pushX, pushZ);
+  if (pushMag > 0.04) {
+    // Only dampen speed proportional to head-on wall impact; glancing side-grazes glide smoothly!
+    const headOn = Math.abs((pushX / pushMag) * fwdX + (pushZ / pushMag) * fwdZ);
+    speed *= Math.max(0.45, 1 - headOn * 0.52);
   }
 
   return { x: pos.x, z: pos.z, hullYaw, speed };
 }
+
+export interface DeterministicEnemyPlacement {
+  faction: Faction;
+  archetype: UnitArchetype;
+  x: number;
+  z: number;
+  y?: number;
+  yaw?: number;
+  hpOverride?: number;
+  sector: string;
+}
+
+/**
+ * 100% Deterministic, Handcrafted Pre-Placed Free Roam Sector Zero Garrison (18 units).
+ * Every hostile is stationed at fixed tactical cover / high-ground / stronghold positions AT LEVEL LOAD —
+ * ZERO random pop-in ("갑툭튀")!
+ */
+export const FREE_ROAM_PREPLACED_ROSTER: readonly DeterministicEnemyPlacement[] = [
+  // South Boulevard Forward Line (visible downrange past crosswalk, >= 19m from spawn z=32)
+  { faction: Faction.RAIDER, archetype: UnitArchetype.RAIDER_TROOPER, x: -6.2, z: 10.5, yaw: 0.15, sector: '남부 대로' },
+  { faction: Faction.SYNDICATE, archetype: UnitArchetype.SYNDICATE_COMMANDO, x: 6.4, z: 10.2, yaw: -0.15, sector: '남부 대로' },
+  { faction: Faction.SYNDICATE, archetype: UnitArchetype.SYNDICATE_SNIPER, x: -18.0, z: 16.5, y: 3.2, yaw: 0.72, sector: '서측 2층 안경점' },
+  { faction: Faction.SYNDICATE, archetype: UnitArchetype.SYNDICATE_SNIPER, x: 18.0, z: 16.5, y: 3.2, yaw: -0.72, sector: '동측 2층 약국' },
+
+  // Central Crossroads & Overpass Defenders (flanking Relay GAMMA)
+  { faction: Faction.RAIDER, archetype: UnitArchetype.RAIDER_BERSERKER, x: -4.2, z: -2.8, yaw: 0.1, sector: '중앙 교차로' },
+  { faction: Faction.SYNDICATE, archetype: UnitArchetype.SYNDICATE_HEAVY, x: 5.4, z: -3.2, yaw: -0.12, sector: '중앙 교차로' },
+  { faction: Faction.ROBOT, archetype: UnitArchetype.ROBOT_ENFORCER, x: 0.2, z: -11.8, yaw: 0, sector: '중앙 고가도로' },
+
+  // West Scrapyard Stronghold (guarding Relay ALPHA at -28, -8)
+  { faction: Faction.RAIDER, archetype: UnitArchetype.RAIDER_TROOPER, x: -24.5, z: -2.0, yaw: 0.4, sector: '서측 폐철 구역' },
+  { faction: Faction.RAIDER, archetype: UnitArchetype.RAIDER_BERSERKER, x: -30.5, z: -13.0, yaw: 0.6, sector: '서측 폐철 구역' },
+  { faction: Faction.ROBOT, archetype: UnitArchetype.ROBOT_STALKER, x: -25.0, z: -12.5, yaw: 0.3, sector: '서측 폐철 구역' },
+
+  // East Aegis Security Hall (guarding Relay BETA at +28, -8)
+  { faction: Faction.SYNDICATE, archetype: UnitArchetype.SYNDICATE_COMMANDO, x: 24.5, z: -2.0, yaw: -0.4, sector: '동측 이지스 구역' },
+  { faction: Faction.SYNDICATE, archetype: UnitArchetype.SYNDICATE_HEAVY, x: 30.5, z: -13.0, yaw: -0.6, sector: '동측 이지스 구역' },
+  { faction: Faction.ROBOT, archetype: UnitArchetype.ROBOT_STALKER, x: 25.0, z: -12.5, yaw: -0.3, sector: '동측 이지스 구역' },
+
+  // North OMNI-CORE Citadel Plaza Elite Garrison (guarding Central Mainframe)
+  { faction: Faction.ROBOT, archetype: UnitArchetype.ROBOT_ENFORCER, x: -7.2, z: -21.5, yaw: 0.15, sector: '시타델 북부 광장' },
+  { faction: Faction.ROBOT, archetype: UnitArchetype.ROBOT_ENFORCER, x: 7.2, z: -21.5, yaw: -0.15, sector: '시타델 북부 광장' },
+  { faction: Faction.ROBOT, archetype: UnitArchetype.ROBOT_STALKER, x: -4.5, z: -25.0, yaw: 0.1, sector: '시타델 북부 광장' },
+  { faction: Faction.ROBOT, archetype: UnitArchetype.ROBOT_STALKER, x: 4.5, z: -25.0, yaw: -0.1, sector: '시타델 북부 광장' },
+  { faction: Faction.ROBOT, archetype: UnitArchetype.ROBOT_TITAN, x: 0.0, z: -26.5, yaw: 0, hpOverride: 1200, sector: 'OMNI-CORE 심장부' },
+];
 
 /**
  * Pure M134 helicopter rotary minigun barrel heat & overheat recovery curve (0..100).

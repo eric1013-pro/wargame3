@@ -33,6 +33,7 @@ export interface ProceduralTextureSet {
   vfxExplosionMap: THREE.CanvasTexture;
   vfxSparkMap: THREE.CanvasTexture;
   vfxMuzzleMap: THREE.CanvasTexture;
+  vfxMuzzleAxialMap: THREE.CanvasTexture;
   vfxBloodMistMap: THREE.CanvasTexture;
   vfxEmpMap: THREE.CanvasTexture;
   dispose: () => void;
@@ -674,31 +675,138 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
     )
   );
 
+  // Photorealistic High-Speed Supersonic Radial Muzzle Flash (Blue-White Throat Core + Jagged Flame Tongues + Sparks)
   const vfxMuzzleMap = track(
     makeCanvasTexture(
       256,
       (ctx, s) => {
         const cx = s / 2;
         const cy = s / 2;
-        const g = ctx.createRadialGradient(cx, cy, 3, cx, cy, s * 0.46);
-        g.addColorStop(0, 'rgba(255,255,245,1)');
-        g.addColorStop(0.25, 'rgba(255,220,115,0.92)');
-        g.addColorStop(0.6, 'rgba(249,115,22,0.45)');
-        g.addColorStop(1, 'rgba(255,80,10,0)');
-        ctx.fillStyle = g;
+        ctx.clearRect(0, 0, s, s);
+
+        // Soft outer warm orange propellant gas halo
+        const outer = ctx.createRadialGradient(cx, cy, 4, cx, cy, s * 0.48);
+        outer.addColorStop(0, 'rgba(255, 252, 235, 0.96)');
+        outer.addColorStop(0.16, 'rgba(255, 224, 140, 0.85)');
+        outer.addColorStop(0.42, 'rgba(246, 118, 28, 0.36)');
+        outer.addColorStop(0.75, 'rgba(180, 52, 10, 0.08)');
+        outer.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = outer;
         ctx.fillRect(0, 0, s, s);
-        ctx.fillStyle = 'rgba(255,250,210,0.92)';
-        for (let i = 0; i < 6; i++) {
+
+        // Organic asymmetric multi-lobed flame petals (compensator ports + irregular burning gas)
+        const petals = [
+          { ang: 0.0, len: 0.47, w: 0.13 },
+          { ang: 0.58, len: 0.34, w: 0.11 },
+          { ang: 1.48, len: 0.41, w: 0.12 },
+          { ang: 2.32, len: 0.31, w: 0.10 },
+          { ang: Math.PI, len: 0.47, w: 0.13 },
+          { ang: 3.74, len: 0.35, w: 0.11 },
+          { ang: 4.72, len: 0.39, w: 0.12 },
+          { ang: 5.52, len: 0.32, w: 0.10 },
+        ];
+        for (const p of petals) {
           ctx.save();
           ctx.translate(cx, cy);
-          ctx.rotate((i / 6) * Math.PI * 2);
+          ctx.rotate(p.ang);
+          const L = s * p.len;
+          const W = s * p.w;
+          const pg = ctx.createLinearGradient(0, 0, L, 0);
+          pg.addColorStop(0, 'rgba(255, 255, 250, 0.95)');
+          pg.addColorStop(0.28, 'rgba(255, 228, 130, 0.82)');
+          pg.addColorStop(0.68, 'rgba(255, 115, 22, 0.42)');
+          pg.addColorStop(1, 'rgba(255, 64, 8, 0)');
+          ctx.fillStyle = pg;
           ctx.beginPath();
-          ctx.moveTo(0, -10);
-          ctx.lineTo(s * 0.46, 0);
-          ctx.lineTo(0, 10);
+          ctx.moveTo(0, -W * 0.42);
+          ctx.quadraticCurveTo(L * 0.42, -W * 0.88, L, 0);
+          ctx.quadraticCurveTo(L * 0.42, W * 0.88, 0, W * 0.42);
           ctx.closePath();
           ctx.fill();
           ctx.restore();
+        }
+
+        // Blazing blue-white supersonic barrel throat core
+        const core = ctx.createRadialGradient(cx, cy, 1, cx, cy, s * 0.17);
+        core.addColorStop(0, 'rgba(255, 255, 255, 1)');
+        core.addColorStop(0.45, 'rgba(224, 242, 255, 0.92)');
+        core.addColorStop(1, 'rgba(255, 210, 110, 0)');
+        ctx.fillStyle = core;
+        ctx.beginPath();
+        ctx.arc(cx, cy, s * 0.17, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Fine radial incandescent powder sparks
+        for (let i = 0; i < 28; i++) {
+          const a = i * 2.39996;
+          const r1 = s * (0.18 + (i % 5) * 0.045);
+          const r2 = r1 + s * (0.06 + (i % 3) * 0.035);
+          ctx.strokeStyle = i % 3 === 0 ? 'rgba(255,250,210,0.85)' : 'rgba(255,155,48,0.65)';
+          ctx.lineWidth = i % 4 === 0 ? 1.8 : 1.1;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
+          ctx.lineTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2);
+          ctx.stroke();
+        }
+      },
+      { isColor: true }
+    )
+  );
+
+  // Photorealistic Side-Profile Longitudinal Mach Shock-Diamond Flame Jet (Left = Barrel Muzzle -> Right = Tip)
+  const vfxMuzzleAxialMap = track(
+    makeCanvasTexture(
+      256,
+      (ctx, s) => {
+        ctx.clearRect(0, 0, s, s);
+        const cy = s / 2;
+
+        // Primary forward supersonic flame plume
+        const plume = ctx.createLinearGradient(0, cy, s * 0.96, cy);
+        plume.addColorStop(0, 'rgba(220, 244, 255, 0.98)');
+        plume.addColorStop(0.14, 'rgba(255, 252, 232, 0.95)');
+        plume.addColorStop(0.42, 'rgba(255, 194, 72, 0.78)');
+        plume.addColorStop(0.76, 'rgba(244, 96, 18, 0.34)');
+        plume.addColorStop(1, 'rgba(180, 38, 6, 0)');
+        ctx.fillStyle = plume;
+        ctx.beginPath();
+        ctx.moveTo(4, cy - 10);
+        ctx.bezierCurveTo(s * 0.24, cy - 58, s * 0.56, cy - 44, s * 0.96, cy);
+        ctx.bezierCurveTo(s * 0.56, cy + 44, s * 0.24, cy + 58, 4, cy + 10);
+        ctx.closePath();
+        ctx.fill();
+
+        // Supersonic Mach shock diamond nodes along center axis
+        for (const [mx, rx, ry, alpha] of [
+          [s * 0.16, 26, 15, 0.95],
+          [s * 0.39, 32, 12, 0.72],
+          [s * 0.62, 24, 8, 0.42],
+        ]) {
+          const mg = ctx.createRadialGradient(mx, cy, 1, mx, cy, rx);
+          mg.addColorStop(0, `rgba(255, 255, 255, ${alpha})`);
+          mg.addColorStop(0.5, `rgba(255, 232, 162, ${alpha * 0.65})`);
+          mg.addColorStop(1, 'rgba(255, 140, 28, 0)');
+          ctx.save();
+          ctx.translate(mx, cy);
+          ctx.scale(1, ry / rx);
+          ctx.fillStyle = mg;
+          ctx.beginPath();
+          ctx.arc(0, 0, rx, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        // Fine forward spark streaks
+        for (let i = 0; i < 16; i++) {
+          const yOff = ((i % 7) - 3) * 11;
+          const xStart = s * (0.28 + (i % 4) * 0.12);
+          const xEnd = Math.min(s - 2, xStart + 22 + (i % 5) * 10);
+          ctx.strokeStyle = 'rgba(255, 224, 140, 0.72)';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.moveTo(xStart, cy + yOff * 0.6);
+          ctx.lineTo(xEnd, cy + yOff * 1.15);
+          ctx.stroke();
         }
       },
       { isColor: true }
@@ -783,6 +891,7 @@ export function createProceduralTextures(maxAnisotropy: number): ProceduralTextu
     vfxExplosionMap,
     vfxSparkMap,
     vfxMuzzleMap,
+    vfxMuzzleAxialMap,
     vfxBloodMistMap,
     vfxEmpMap,
     dispose: () => {

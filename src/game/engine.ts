@@ -20,10 +20,12 @@ import {
 import {
   buildDropshipModel,
   buildEnemyModel,
+  buildPlayerFirstPersonBody,
   buildRokSquadmateModel,
   buildSupplyPodModel,
   buildViewmodelRig,
   EnemyRig,
+  PlayerBodyRig,
   RokSquadmateRig,
   ViewmodelRig,
 } from './models';
@@ -49,6 +51,7 @@ import {
   evaluatePartHit,
   FACTION_META,
   formatClock,
+  FREE_ROAM_PREPLACED_ROSTER,
   PART_LABELS_KR,
   PART_MULTIPLIERS,
   resolveXZCollision,
@@ -400,6 +403,19 @@ const CINEMATIC_GRADE_SHADER = {
       vec2 centered = vUv - 0.5;
       float dist = length(centered);
 
+      // K2-X Black Panther Tank Gunner Thermal FCS Optic (0.25 < uFlirMode <= 0.5)
+      if (uFlirMode > 0.25 && uFlirMode <= 0.5) {
+        vec3 raw = texture2D(tDiffuse, vUv).rgb;
+        float heat = dot(raw, vec3(0.35, 0.52, 0.13));
+        float th = clamp(pow(max(0.0, heat * 1.42), 0.82) * 1.15, 0.0, 1.0);
+        float scan = sin(vUv.y * 520.0) * 0.018;
+        float vigT = smoothstep(0.86, 0.26, dist);
+        vec3 colT = mix(vec3(0.02, 0.10, 0.08), vec3(0.72, 1.0, 0.84), clamp(th + scan, 0.0, 1.0));
+        colT += vec3(0.28, 0.18, 0.0) * smoothstep(0.74, 0.96, th);
+        gl_FragColor = vec4(colT * mix(0.45, 1.0, vigT), 1.0);
+        return;
+      }
+
       // Authentic AC-130 B&W Thermal FLIR Imaging (WHOT / BHOT) with CRT scanlines & sensor grain
       if (uFlirMode > 0.5) {
         vec3 raw = texture2D(tDiffuse, vUv).rgb;
@@ -750,7 +766,19 @@ export class IronAshEngine {
   private analytics: CombatAnalyticsData = createEmptyAnalytics(WASTELAND_HOLOTAPES.length);
   private lastBucketSec = 0;
   private fovKick = 0;
-  private muzzleSprite!: THREE.Sprite;
+  private muzzleFlashRig!: {
+    group: THREE.Group;
+    frontPlane: THREE.Mesh;
+    axialA: THREE.Mesh;
+    axialB: THREE.Mesh;
+    sideJetL: THREE.Mesh;
+    sideJetR: THREE.Mesh;
+    frontMat: THREE.MeshBasicMaterial;
+    axialMat: THREE.MeshBasicMaterial;
+  };
+  private muzzleFlashDuration = 0.068;
+  private playerBody!: PlayerBodyRig;
+  private shotgunShellMat!: THREE.MeshStandardMaterial;
 
   // Player state
   private player = {
@@ -852,41 +880,50 @@ export class IronAshEngine {
     this.renderer.domElement.style.height = '100%';
     container.appendChild(this.renderer.domElement);
 
-    // Moody Stormy Neo-Seoul Night PMREM IBL (replaces bright white studio RoomEnvironment lightbox!)
+    // Rich Multi-Band Stormy Pre-Dawn Neo-Seoul PMREM IBL (gives realistic wet-puddle, glass & titanium reflections!)
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     const envScene = new THREE.Scene();
-    envScene.background = new THREE.Color(0x0b1018);
-    // Overcast dark steel-blue storm sky dome panel
+    envScene.background = new THREE.Color(0x0d1522);
     const skyPanel = new THREE.Mesh(
-      new THREE.SphereGeometry(20, 16, 12),
-      new THREE.MeshBasicMaterial({ color: 0x1e2c3e, side: THREE.BackSide })
+      new THREE.SphereGeometry(24, 24, 16),
+      new THREE.MeshBasicMaterial({ color: 0x26384d, side: THREE.BackSide })
     );
     envScene.add(skyPanel);
-    // Subtle distant amber urban fire glow along north horizon
+    // Bright silver-steel overcast cloud break overhead (drives crisp metallic edge speculars!)
+    const cloudBreak = new THREE.Mesh(
+      new THREE.PlaneGeometry(24, 18),
+      new THREE.MeshBasicMaterial({ color: 0x9cb4cf })
+    );
+    cloudBreak.rotation.x = Math.PI / 2;
+    cloudBreak.position.set(5, 13, -4);
+    envScene.add(cloudBreak);
+    // Distant muted amber city firelight horizon strip (warm contrast in wet puddles & gunmetal)
     const fireBounce = new THREE.Mesh(
-      new THREE.PlaneGeometry(18, 5),
-      new THREE.MeshBasicMaterial({ color: 0x6b321a })
+      new THREE.PlaneGeometry(26, 5.5),
+      new THREE.MeshBasicMaterial({ color: 0xa8582c })
     );
-    fireBounce.position.set(0, 2, -12);
+    fireBounce.position.set(0, 2.5, -15);
     envScene.add(fireBounce);
-    // Soft moonlight overcast cloud break overhead
-    const moonBounce = new THREE.Mesh(
-      new THREE.PlaneGeometry(14, 14),
-      new THREE.MeshBasicMaterial({ color: 0x5c728a })
-    );
-    moonBounce.rotation.x = Math.PI / 2;
-    moonBounce.position.set(4, 11, -3);
-    envScene.add(moonBounce);
-    // Dark damp asphalt ground bounce so undersides never glow white
+    // Cool cyan-slate Seoul streetlamp bounce on east/west flanks
+    for (const sx of [-15, 15]) {
+      const flank = new THREE.Mesh(
+        new THREE.PlaneGeometry(18, 4.5),
+        new THREE.MeshBasicMaterial({ color: sx < 0 ? 0x6f5a44 : 0x45698c })
+      );
+      flank.position.set(sx, 2.8, 0);
+      flank.rotation.y = sx < 0 ? Math.PI / 2 : -Math.PI / 2;
+      envScene.add(flank);
+    }
+    // Dark damp asphalt ground bounce so undersides keep rich contrast
     const groundBounce = new THREE.Mesh(
-      new THREE.PlaneGeometry(36, 36),
-      new THREE.MeshBasicMaterial({ color: 0x0b0e14 })
+      new THREE.PlaneGeometry(42, 42),
+      new THREE.MeshBasicMaterial({ color: 0x0a0e14 })
     );
     groundBounce.rotation.x = -Math.PI / 2;
     groundBounce.position.y = -6;
     envScene.add(groundBounce);
-    this.scene.environment = pmrem.fromScene(envScene, 0.08).texture;
-    this.scene.environmentIntensity = 0.94;
+    this.scene.environment = pmrem.fromScene(envScene, 0.04).texture;
+    this.scene.environmentIntensity = 1.12;
     pmrem.dispose();
 
     const maxAniso = this.isSoftwareGl ? 1 : Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
@@ -894,22 +931,68 @@ export class IronAshEngine {
     this.pbr = createExtendedPbrLibrary(maxAniso);
     this.vfx = new VolumetricVfxSystem(this.scene);
     this.vfx.setSmokeTexture(this.pbr.smokePuffTex);
+    this.vfx.setMuzzleAxialTexture(this.textures.vfxMuzzleAxialMap);
     this.initMaterials();
     this.initLighting();
     this.viewmodel = buildViewmodelRig(this.camera, this.textures, this.pbr);
-    const muzzleSpriteMat = new THREE.SpriteMaterial({
+    this.playerBody = buildPlayerFirstPersonBody(this.pbr);
+    this.scene.add(this.playerBody.root);
+
+    // Photorealistic 3D Multi-Plane Volumetric Muzzle Flash Rig (Radial Core + Crossed Mach Flame + Side Brake Jets!)
+    const flashGroup = new THREE.Group();
+    flashGroup.position.set(0, 0.02, -0.99);
+    flashGroup.visible = false;
+    const frontMat = new THREE.MeshBasicMaterial({
       map: this.textures.vfxMuzzleMap,
+      color: 0xffdf9a,
       transparent: true,
-      opacity: 0.54,
+      opacity: 0.92,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
-      depthTest: true,
+      side: THREE.DoubleSide,
     });
-    this.muzzleSprite = new THREE.Sprite(muzzleSpriteMat);
-    this.muzzleSprite.position.set(0, 0.03, -1.08);
-    this.muzzleSprite.scale.set(0.32, 0.32, 1);
-    this.muzzleSprite.visible = false;
-    this.viewmodel.pivot.add(this.muzzleSprite);
+    const axialMat = new THREE.MeshBasicMaterial({
+      map: this.textures.vfxMuzzleAxialMap,
+      color: 0xffd27a,
+      transparent: true,
+      opacity: 0.94,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const frontPlane = new THREE.Mesh(new THREE.PlaneGeometry(0.34, 0.34), frontMat);
+    flashGroup.add(frontPlane);
+
+    // Crossed longitudinal Mach shock-diamond flame planes shooting forward (-Z) out of the barrel
+    const axialGeo = new THREE.PlaneGeometry(0.48, 0.24);
+    axialGeo.translate(0.22, 0, 0); // origin right at barrel bore!
+    const axialA = new THREE.Mesh(axialGeo, axialMat);
+    axialA.rotation.y = Math.PI / 2;
+    const axialB = new THREE.Mesh(axialGeo, axialMat);
+    axialB.rotation.y = Math.PI / 2;
+    axialB.rotation.x = Math.PI / 2;
+    flashGroup.add(axialA, axialB);
+
+    // Twin horizontal compensator / muzzle-brake side gas-port vent jets!
+    const sideGeo = new THREE.PlaneGeometry(0.24, 0.13);
+    sideGeo.translate(0.11, 0, 0);
+    const sideJetR = new THREE.Mesh(sideGeo, axialMat);
+    sideJetR.rotation.y = 0.22;
+    const sideJetL = new THREE.Mesh(sideGeo, axialMat);
+    sideJetL.rotation.y = Math.PI - 0.22;
+    flashGroup.add(sideJetL, sideJetR);
+
+    this.viewmodel.pivot.add(flashGroup);
+    this.muzzleFlashRig = {
+      group: flashGroup,
+      frontPlane,
+      axialA,
+      axialB,
+      sideJetL,
+      sideJetR,
+      frontMat,
+      axialMat,
+    };
 
     // CoD PEQ-15 Tactical Laser Sight Beam + Target Impact Dot
     const laserGeo = new THREE.BufferGeometry().setFromPoints([
@@ -1032,18 +1115,18 @@ export class IronAshEngine {
 
   private initMaterials(): void {
     this.matCache = {
-      // Real photographic rain-wet Seoul tarmac asphalt with Sobel normal + puddle roughness + cavity AO!
+      // Real photographic rain-wet Seoul tarmac asphalt with Sobel normal + glossy wet puddles + active AO!
       floor: new THREE.MeshStandardMaterial({
-        color: 0xcfd6df,
+        color: 0xd4dce6,
         map: this.pbr.seoulAsphalt.map,
         normalMap: this.pbr.seoulAsphalt.normalMap,
-        normalScale: new THREE.Vector2(1.05, 1.05),
+        normalScale: new THREE.Vector2(1.15, 1.15),
         roughnessMap: this.pbr.seoulAsphalt.roughnessMap,
         aoMap: this.pbr.seoulAsphalt.aoMap,
-        aoMapIntensity: 0.78,
-        roughness: 0.94,
-        metalness: 0.16,
-        envMapIntensity: 0.48,
+        aoMapIntensity: 0.85,
+        roughness: 0.86,
+        metalness: 0.24,
+        envMapIntensity: 1.25,
       }),
       // Matte war-scarred concrete & Euljiro architectural bulkheads
       concrete: new THREE.MeshStandardMaterial({
@@ -1117,12 +1200,18 @@ export class IronAshEngine {
       }),
       fire: new THREE.MeshBasicMaterial({ color: 0xff5a14 }),
       brass: new THREE.MeshStandardMaterial({
-        color: 0xd4a442,
-        roughness: 0.28,
-        metalness: 0.88,
-        envMapIntensity: 0.85,
+        color: 0xd8a844,
+        roughness: 0.24,
+        metalness: 0.9,
+        envMapIntensity: 1.0,
       }),
     };
+    this.shotgunShellMat = new THREE.MeshStandardMaterial({
+      color: 0xa81c24,
+      roughness: 0.44,
+      metalness: 0.22,
+      envMapIntensity: 0.65,
+    });
   }
 
   private initLighting(): void {
@@ -1376,13 +1465,13 @@ export class IronAshEngine {
     this.setPhase('playing');
     if (mode === 'freeroam') {
       this.player.equipTimer = 0.55;
-      // Deploy drivable ROK K2-X Black Panther Main Battle Tank right at the southern depot!
-      this.deployTankAt(9.5, 24.5, 0);
+      // Deploy drivable ROK K2-X Black Panther Main Battle Tank cleanly on the open southern boulevard!
+      this.deployTankAt(0, 21.5, 0);
       if (autoBoardTank) this.enterTank();
       this.cinematic.showChapterCard(
         'FREE ROAM // 네오-섹터 제로',
         'WARZONE SANDBOX',
-        'K2-X 흑표 전차 배치 · 5성 위협 경보 · 무한 화력전',
+        '전 구역 고정 배치 수비대 18기 · K2-X 흑표 전차 배치 · 무갑툭튀 전술전',
         '#f5b342',
         4.2
       );
@@ -2143,6 +2232,8 @@ export class IronAshEngine {
         r.coreCrystal.visible = isSandbox;
         r.beamMesh.visible = isSandbox;
         r.ringMesh.visible = isSandbox;
+        // CRITICAL FIX: disable hidden Relay colliders in Campaign so zero invisible center wall blocks tank/player!
+        r.collider.alive = isSandbox;
         const hi = this.worldHitMeshes.indexOf(r.hitMesh);
         const ci = this.worldHitMeshes.indexOf(r.coreCrystal);
         if (isSandbox) {
@@ -2151,6 +2242,13 @@ export class IronAshEngine {
         } else {
           if (hi !== -1) this.worldHitMeshes.splice(hi, 1);
           if (ci !== -1) this.worldHitMeshes.splice(ci, 1);
+        }
+      }
+      // Restore all tank-crushable street clutter (barricades, lamps, sandbags, sedans, crates) cleanly on match restart!
+      for (const c of this.colliders) {
+        if (c.tankCrushable) {
+          c.alive = true;
+          c.mesh.visible = true;
         }
       }
       this.worldRefs.vaultGate.visible = isSandbox;
@@ -2295,13 +2393,14 @@ export class IronAshEngine {
   }
 
   private spawnInitialSkirmish(): void {
-    // Balanced opening 3-way AI robot skirmish across the widened central lane & flanking wings
-    this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, -5.5, 9);
-    this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, 5.5, 9);
-    this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_BERSERKER, -7.0, -7);
-    this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, 7.0, -7);
-    this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, -25, -4);
-    this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 25, -4);
+    // 100% Deterministic, Pre-Placed Sector Zero Tactical Garrison (18 units across every sector — ZERO random pop-in!)
+    for (const p of FREE_ROAM_PREPLACED_ROSTER) {
+      const u = this.createEnemy(p.faction, p.archetype, p.x, p.z, p.y ?? 0, p.yaw ?? 0);
+      if (p.hpOverride) {
+        u.hp = p.hpOverride;
+        u.maxHp = p.hpOverride;
+      }
+    }
   }
 
   private rebuildHitMeshCache(): void {
@@ -2333,7 +2432,8 @@ export class IronAshEngine {
     archetype: UnitArchetype,
     x: number,
     z: number,
-    y = 0
+    y = 0,
+    initialYaw?: number
   ): ActiveUnit {
     const isBoss = archetype === UnitArchetype.ROBOT_TITAN;
     // Everyone on the surface is an AI Robot — only the player is human
@@ -2418,7 +2518,7 @@ export class IronAshEngine {
       y,
       z,
       r: 0.56 * scale,
-      yaw: Math.random() * Math.PI * 2,
+      yaw: initialYaw ?? Math.atan2(-x, 32 - z),
       hp,
       maxHp: hp,
       speed: speedMap[archetype],
@@ -2666,16 +2766,24 @@ export class IronAshEngine {
       const old = this.shells.shift()!;
       this.scene.remove(old.mesh);
     }
-    const mesh = new THREE.Mesh(this.shellGeo, this.matCache.brass);
-    const pos = new THREE.Vector3(0.28, -0.12, -0.45).applyMatrix4(this.camera.matrixWorld);
+    const isShotgun = this.player.wpnIdx === 1;
+    const mesh = new THREE.Mesh(
+      this.shellGeo,
+      isShotgun ? this.shotgunShellMat : this.matCache.brass
+    );
+    if (isShotgun) mesh.scale.set(1.55, 1.35, 1.55);
+    // Align accurately to weapon ejection port whether hipfiring or aiming down sights (ADS)!
+    const ejX = this.player.ads ? 0.08 : 0.24;
+    const ejY = this.player.ads ? -0.07 : -0.11;
+    const pos = new THREE.Vector3(ejX, ejY, -0.44).applyMatrix4(this.camera.matrixWorld);
     mesh.position.copy(pos);
     this.scene.add(mesh);
 
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(this.camera.quaternion);
     const vel = right
-      .multiplyScalar(2.6 + Math.random() * 1.4)
-      .addScaledVector(up, 1.8 + Math.random() * 1.0);
+      .multiplyScalar(2.4 + Math.random() * 1.3)
+      .addScaledVector(up, 1.65 + Math.random() * 0.95);
 
     this.shells.push({
       mesh,
@@ -3512,6 +3620,7 @@ export class IronAshEngine {
 
     if (relay.hp <= 0) {
       relay.alive = false;
+      relay.collider.alive = false;
       relay.coreCrystal.visible = false;
       relay.beamMesh.visible = false;
       relay.ringMesh.visible = false;
@@ -3944,18 +4053,19 @@ export class IronAshEngine {
     );
     aimDir.applyQuaternion(q).normalize();
 
-    // Massive muzzle blast flash, smoke & flying sparks
-    this.muzzleLight.position.copy(muzzleWorld);
-    this.muzzleLight.intensity = 18;
-    this.vfx.spawnSparkBurst(muzzleWorld, aimDir, 18, 0xffc857, 16);
-    this.vfx.spawnExplosion(muzzleWorld.clone().addScaledVector(aimDir, 0.4), 2.4, false);
+    // Massive photorealistic 120mm Mach muzzle blast + pressurized propellant smoke + world blast light!
+    this.blastLight.color.setHex(0xffb44d);
+    this.blastLight.position.copy(muzzleWorld);
+    this.blastLight.intensity = 28;
+    this.vfx.spawnRealisticMuzzleBlast(muzzleWorld, aimDir, 0xffc864, 2.45);
 
-    // Launch supersonic 120mm APFSDS/HE glowing shell
+    // Launch supersonic 120mm APFSDS/HE glowing tracer round
     const shellMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.18, 10, 8),
-      new THREE.MeshBasicMaterial({ color: 0xffd166 })
+      new THREE.CylinderGeometry(0.08, 0.12, 1.35, 8).rotateX(Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xffe49e })
     );
     shellMesh.position.copy(muzzleWorld);
+    shellMesh.quaternion.copy(q);
     this.scene.add(shellMesh);
     this.tankShells.push({
       mesh: shellMesh,
@@ -4147,6 +4257,34 @@ export class IronAshEngine {
       (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0) -
       (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0);
 
+    // 55-Ton K2-X Black Panther Armor Crush: smash light street clutter (barricades, lamps, sandbags, sedans, crates)
+    // and detonate explosive barrels BEFORE collision resolution so the tank NEVER gets stuck!
+    const crushRad = 2.65;
+    for (let i = 0; i < this.colliders.length; i++) {
+      const c = this.colliders[i];
+      if (!c.alive || !c.tankCrushable) continue;
+      const cx = (c.minX + c.maxX) * 0.5;
+      const cz = (c.minZ + c.maxZ) * 0.5;
+      if (Math.hypot(cx - this.tank.x, cz - this.tank.z) < crushRad + Math.max(c.maxX - c.minX, c.maxZ - c.minZ) * 0.35) {
+        c.alive = false;
+        c.mesh.visible = false;
+        // Disable sibling multi-segment colliders belonging to the same crushed vehicle/bunker mesh
+        for (let j = 0; j < this.colliders.length; j++) {
+          if (this.colliders[j].mesh === c.mesh) this.colliders[j].alive = false;
+        }
+        const hitPt = new THREE.Vector3(cx, 0.85, cz);
+        this.vfx.spawnConcreteImpact(hitPt, new THREE.Vector3(0, 1, 0));
+        this.vfx.spawnSparkBurst(hitPt, new THREE.Vector3(0, 0.7, 0), 10, 0xffaa33, 9);
+        this.audio.playExplosion(0.32, false, false);
+        this.shake = Math.max(this.shake, 0.16);
+      }
+    }
+    for (const b of this.explosiveBarrels) {
+      if (b.alive && Math.hypot(b.x - this.tank.x, b.z - this.tank.z) < 2.85) {
+        this.damageBarrel(b, 120, Faction.PLAYER, 'K2-X 장갑 돌파');
+      }
+    }
+
     const next = stepTankDrivePhysics(
       { x: this.tank.x, z: this.tank.z, hullYaw: this.tank.hullYaw, speed: this.tank.speed },
       fwd,
@@ -4316,8 +4454,16 @@ export class IronAshEngine {
     const endPt = hits.length > 0 ? hits[0].point.clone() : origin.clone().addScaledVector(dir, 95);
 
     this.spawnTracer(origin, endPt, 0xff9e3d, 0.075, 'bullet');
-    this.muzzleLight.position.copy(origin);
+    this.vfx.spawnRealisticMuzzleBlast(
+      origin.clone().addScaledVector(dir, 0.9),
+      dir,
+      0xffbe55,
+      0.72
+    );
+    this.muzzleLight.position.set(0.18, -0.14, -1.1);
+    this.muzzleLight.color.setHex(0xffb44d);
     this.muzzleLight.intensity = 9.5;
+    this.player.muzzleTimer = 0.055;
 
     let hitSomething = false;
     if (hits.length > 0) {
@@ -4637,6 +4783,16 @@ export class IronAshEngine {
       this.setSquadmateState('corporal', false, 1.85, 1.2, 50.5, Math.PI, 'active');
       this.setSquadmateState('ghost9', false, 16, 0, 4.5);
       this.setSquadmateState('survivor', false, 17, 0, 5.2);
+
+      // PRE-PLACE ALL 6 beachhead defenders BEFORE landing so they're visibly deployed ahead as the ramp opens (ZERO pop-in!)
+      this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, -7.2, 16.5, 0, 0.15);
+      this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, 6.8, 16.0, 0, -0.15);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, -4.5, 11.5, 0, 0.1);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, 5.2, 12.2, 0, -0.1);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, -9.0, 7.5, 0, 0.25);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 2.0, 6.5, 0, 0);
+      this.stageTotalHostiles = 6;
+
       this.cinematic.showChapterCard(
         `${prof.numberLabel} // ${prof.code}`,
         prof.title,
@@ -4646,7 +4802,16 @@ export class IronAshEngine {
       );
       this.audio.playJetFlyby(0.86);
     } else if (stage === 'm1_beachhead') {
-      this.clearMissionEnemies();
+      const hasPreplacedBeachhead = this.units.some((u) => u.alive);
+      if (!hasPreplacedBeachhead) {
+        this.clearMissionEnemies();
+        this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, -7.2, 16.5, 0, 0.15);
+        this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, 6.8, 16.0, 0, -0.15);
+        this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, -4.5, 11.5, 0, 0.1);
+        this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, 5.2, 12.2, 0, -0.1);
+        this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, -9.0, 7.5, 0, 0.25);
+        this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 2.0, 6.5, 0, 0);
+      }
       this.player.x = 0;
       this.player.y = 1.7;
       this.player.z = 32;
@@ -4661,22 +4826,14 @@ export class IronAshEngine {
       this.setSquadmateState('corporal', false, 3.4, 0, 28.0, Math.PI, 'active');
       this.setSquadmateState('ghost9', false, 16, 0, 4.5);
       this.setSquadmateState('survivor', false, 17, 0, 5.2);
-
-      // Scripted 6-enemy beachhead ambush across burning K-808 & sandbags (zero wave grind!)
-      this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, -7.2, 16.5);
-      this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, 6.8, 16.0);
-      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, -4.5, 11.5);
-      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, 5.2, 12.2);
-      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, -9.0, 7.5);
-      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 2.0, 6.5);
       this.stageTotalHostiles = 6;
       this.pushRadioLine(
         '발키리-01 · 강서연 대위',
         '궤도 작전 지휘',
         'valkyrie',
         '#2ee6a6',
-        '상륙 완료 확인! 모래주머니 진지를 엄폐로 삼아 전방 해안 매복조 6기를 단독 소탕하라!',
-        4.6,
+        '상륙 완료! 전방 모래주머니 방어선 너머 적 6기 포착—엄폐물을 활용해 교두보를 확보하라.',
+        4.8,
         true
       );
     } else if (stage === 'm2_alley') {
@@ -4881,8 +5038,11 @@ export class IronAshEngine {
       this.setSquadmateState('ghost9', false, 16, 0, 4.5);
       this.setSquadmateState('survivor', false, 17, 0, 5.2);
 
-      // Wave 1 of 3 thermal ambush groups
+      // PRE-PLACE ALL 14 enemy convoy units across South, Central & North avenues at stage start (ZERO mid-screen wave pop-in!)
+      this.ac130WaveIdx = 3;
       this.spawnAc130HostileWave(1);
+      this.spawnAc130HostileWave(2);
+      this.spawnAc130HostileWave(3);
       this.cinematic.showChapterCard(
         `${prof.numberLabel} // AC-130 FLIR`,
         'AC-130 열화상(FLIR) 화력 지원',
@@ -4896,7 +5056,7 @@ export class IronAshEngine {
         '궤도 화력관제사',
         'gunship',
         '#e2e8f0',
-        '열화상(FLIR) 전환 완료. 시타델 진입로 적 기갑 증원파가 몰려온다—25mm·40mm·105mm 함포로 전부 초토화하라!',
+        '열화상(FLIR) 링크 동기화 완료. 시타델 대로 전역에 집결한 적 기갑 종대 14기 포착—전탄 화력 지원 개시!',
         5.2,
         true
       );
@@ -5086,40 +5246,22 @@ export class IronAshEngine {
   private spawnAc130HostileWave(waveNum: 1 | 2 | 3): void {
     this.ac130WaveIdx = waveNum;
     if (waveNum === 1) {
-      this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, -7.5, 4.5);
-      this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, 7.2, 3.8);
-      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, -3.5, -2.5);
-      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, 4.2, -3.0);
+      this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, -7.5, 4.5, 0, 0.1);
+      this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, 7.2, 3.8, 0, -0.1);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, -3.5, -2.5, 0, 0.05);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_COMMANDO, 4.2, -3.0, 0, -0.05);
     } else if (waveNum === 2) {
-      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, -8.5, -6.5);
-      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, 8.2, -7.2);
-      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 0, -10.5);
-      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, -5.2, -11.5);
-      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, 5.6, -12.0);
-      this.pushRadioLine(
-        '소재우 중사',
-        '지상 알파 분대',
-        'squad',
-        '#2ee6a6',
-        '천사-01, 적 기갑 증원 북쪽 도로로 밀려온다! 105밀리로 쓸어버려!',
-        4.2,
-        true
-      );
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, -8.5, -6.5, 0, 0.15);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, 8.2, -7.2, 0, -0.15);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 0, -10.5, 0, 0);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, -5.2, -11.5, 0, 0.1);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, 5.6, -12.0, 0, -0.1);
     } else {
-      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, -9.5, -14.5);
-      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 9.5, -14.5);
-      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, -4.0, -18.5);
-      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, 4.0, -18.5);
-      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, 0, -21.0);
-      this.pushRadioLine(
-        '천사-01 · AC-130 건쉽',
-        '궤도 화력관제사',
-        'gunship',
-        '#fbbf24',
-        '타워 입구 마지막 적 방어선 포착! 전탄 화력 지원 개시!',
-        4.2,
-        true
-      );
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, -9.5, -14.5, 0, 0.2);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, 9.5, -14.5, 0, -0.2);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, -4.0, -18.5, 0, 0.08);
+      this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, 4.0, -18.5, 0, -0.08);
+      this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, 0, -21.0, 0, 0);
     }
   }
 
@@ -5547,24 +5689,33 @@ export class IronAshEngine {
       const rampT = Math.max(0, Math.min(1, (t - 5.9) / 1.1));
       lcac.rampPivot.rotation.x = -0.22 - (Math.PI * 0.44 - 0.22) * (rampT * rampT);
 
-      // 1st-person uncut knockdown (t=2.9..4.7) -> haul-up (t=4.7..6.1) camera cleanly ABOVE LCAC well-deck (zero hull clipping!)
+      // 1st-person uncut knockdown (t=2.9..4.7) -> haul-up (t=4.7..6.1) -> smooth step-off ramp glide (t=6.1..7.3)
       let eyeY = 3.18 + swellY;
+      let camZ = hoverZ - 3.6;
       let camRoll = swellRoll;
       if (t >= 2.9 && t < 4.7) {
         const kd = Math.min(1, (t - 2.9) / 0.45);
-        eyeY = 3.18 - kd * 1.12 + swellY;
-        camRoll = -0.34 * kd;
-      } else if (t >= 4.7 && t < 6.2) {
-        const up = Math.min(1, (t - 4.7) / 1.35);
-        const eUp = 1 - Math.pow(1 - up, 2);
+        const eKd = kd * kd * (3 - 2 * kd);
+        eyeY = 3.18 - eKd * 1.12 + swellY;
+        camRoll = -0.34 * eKd;
+      } else if (t >= 4.7 && t < 6.1) {
+        const up = Math.min(1, (t - 4.7) / 1.4);
+        const eUp = up * up * (3 - 2 * up);
         eyeY = 2.06 + eUp * 1.12 + Math.sin(up * Math.PI) * 0.14;
         camRoll = -0.34 * (1 - eUp);
+      } else if (t >= 6.1) {
+        // Silky smooth walk-off the lowered LCAC ramp straight onto z=32, y=1.7 (ZERO camera teleport snap!)
+        const walk = Math.min(1, (t - 6.1) / 1.2);
+        const eW = walk * walk * walk * (walk * (walk * 6 - 15) + 10);
+        eyeY = 3.18 * (1 - eW) + 1.7 * eW + Math.sin(walk * Math.PI * 3) * 0.05;
+        camZ = (hoverZ - 3.6) * (1 - eW) + 32.0 * eW;
+        camRoll = swellRoll * (1 - eW);
       }
 
       this.shake *= Math.pow(0.002, realDt);
       const shkX = (Math.random() - 0.5) * this.shake * 0.24;
       const shkY = (Math.random() - 0.5) * this.shake * 0.24;
-      this.camera.position.set(shkX, eyeY + shkY, hoverZ - 3.6);
+      this.camera.position.set(shkX, eyeY + shkY, camZ);
       this.camera.rotation.y = Math.max(-0.85, Math.min(0.85, this.player.yaw));
       this.camera.rotation.x = Math.max(-0.55, Math.min(0.55, this.player.pitch));
       this.camera.rotation.z = camRoll;
@@ -5583,12 +5734,12 @@ export class IronAshEngine {
       if (alive === 0) {
         this.triggerCheckpoint('체크포인트 도달');
         this.pushRadioLine(
-          '소재우 중사',
-          '알파 분대장',
-          'squad',
+          '발키리-01 · 강서연 대위',
+          '궤도 작전 지휘',
+          'valkyrie',
           '#2ee6a6',
-          '해안 교두보 확보 완료! 을지로 도심 골목으로 전진한다—따라와!',
-          3.8,
+          '해안 교두보 확보 확인! 이안, 을지로4가 진입로가 열렸어—생존자 신호가 잡히는 도심 골목으로 진입해!',
+          4.2,
           true
         );
         this.stageTransitionDelay = 2.0;
@@ -5607,7 +5758,7 @@ export class IronAshEngine {
           'UNS 아크라이트 · 암호 회선',
           'valkyrie',
           '#38d9ff',
-          '이안, 조심해... 상부에서 궤도 소각 프로토콜을 준비 중이야. 네가 직접 코어를 멈춰야 서울이 산다.',
+          '이안, 궤도 사령부가 내 말을 안 들어... 네가 코어를 멈추지 못하면 30분 뒤 서울 전역에 궤도 소각 명령이 떨어진다.',
           5.6,
           false
         );
@@ -5620,11 +5771,11 @@ export class IronAshEngine {
           this.stageMilestones.add('m2_alley_clear');
           this.triggerCheckpoint('체크포인트 도달');
           this.pushRadioLine(
-            '소재우 중사',
-            '알파 분대장',
-            'squad',
+            '발키리-01 · 강서연 대위',
+            '궤도 작전 지휘',
+            'valkyrie',
             '#38d9ff',
-            '골목 정리 완료! 동쪽 적 지휘소 방폭문에 붙어—[F]로 C4 폭파 브리칭한다!',
+            '을지로 골목 제압 완료! 동쪽 적 지휘소 방폭문에 접근해 [F]로 C4 슬로모션 브리칭을 개시하라.',
             4.8,
             true
           );
@@ -6537,7 +6688,8 @@ export class IronAshEngine {
       )
     );
     this.fovKick = Math.max(this.fovKick, w.id === 1 ? 3.8 : w.id === 2 || w.id === 3 ? 4.8 : 0.9);
-    this.player.muzzleTimer = w.id === 4 ? 0.085 : 0.06;
+    this.muzzleFlashDuration = w.id === 4 ? 0.088 : w.id === 1 ? 0.075 : 0.064;
+    this.player.muzzleTimer = this.muzzleFlashDuration;
     this.shake = Math.max(this.shake, w.shake * (this.mounted ? 0.52 : 1.0));
 
     this.audio.playWeapon(w.sound, 1.0, { isIndoors: this.isIndoors, distanceM: 0 });
@@ -7963,27 +8115,76 @@ export class IronAshEngine {
         0.45 + teslaPower * 0.55
       );
 
+      // Photorealistic 3D Multi-Plane Volumetric Muzzle Flash (Radial Core + Crossed Mach Flame + Side Brake Jets!)
+      const muzzleZOffsets = [-0.99, -0.84, -1.04, -0.82, -0.86, -0.94];
+      const muzzleYOffsets = [0.025, 0.036, 0.032, 0.024, 0.02, 0.02];
       if (this.player.muzzleTimer > 0) {
-        this.player.muzzleTimer -= clampedRealDt;
-        this.viewmodel.muzzleFlash.visible = !this.player.ads;
-        this.viewmodel.muzzleFlash.rotation.z += 1.45;
-        this.muzzleSprite.visible = !this.player.ads || w.id !== 2;
-        const mMat = this.muzzleSprite.material as THREE.SpriteMaterial;
-        mMat.rotation = Math.random() * Math.PI * 2;
-        const flashHex =
-          w.id === 2 || w.id === 5 ? 0x38d9ff : w.id === 4 ? 0xff7b29 : 0xffd280;
-        mMat.color.setHex(flashHex);
-        this.muzzleLight.color.setHex(flashHex);
-        const adsShrink = this.player.ads ? 0.62 : 1.0;
-        const mScale = (w.id === 1 ? 0.38 : w.id === 2 || w.id === 3 || w.id === 5 ? 0.34 : 0.28) * adsShrink;
+        this.player.muzzleTimer = Math.max(0, this.player.muzzleTimer - clampedRealDt);
+        const norm = Math.max(0, Math.min(1, this.player.muzzleTimer / this.muzzleFlashDuration));
+        const flashAlpha = Math.pow(norm, 0.58);
+        const isScopedSniper = w.id === 2 && this.adsBlend > 0.45;
         this.viewmodel.muzzleFlash.visible = false;
-        this.muzzleSprite.visible = true;
-        this.muzzleSprite.scale.set(mScale, mScale, 1);
-        this.muzzleLight.intensity = (w.id === 2 || w.id === 5 ? 16.0 : 12.5) * (this.player.ads ? 0.72 : 1.0);
+        this.muzzleFlashRig.group.visible = !isScopedSniper && norm > 0.02;
+
+        if (this.muzzleFlashRig.group.visible) {
+          const flashHex =
+            w.id === 2 || w.id === 5 ? 0x62e2ff : w.id === 4 ? 0xff7b29 : 0xffd27a;
+          const coreHex =
+            w.id === 2 || w.id === 5 ? 0xe0f8ff : 0xfff3d4;
+          this.muzzleFlashRig.frontMat.color.setHex(coreHex);
+          this.muzzleFlashRig.frontMat.opacity = 0.94 * flashAlpha;
+          this.muzzleFlashRig.axialMat.color.setHex(flashHex);
+          this.muzzleFlashRig.axialMat.opacity = 0.92 * flashAlpha;
+
+          this.muzzleFlashRig.group.position.set(
+            0,
+            muzzleYOffsets[w.id] ?? 0.025,
+            muzzleZOffsets[w.id] ?? -0.95
+          );
+          // Randomize roll & micro-scale every frame/shot so no two muzzle flashes look identical!
+          const adsShrink = this.player.ads ? 0.68 : 1.0;
+          const baseScale = (w.id === 1 ? 1.25 : w.id === 3 ? 1.35 : w.id === 2 ? 1.15 : 0.96) * adsShrink;
+          const pulse = (0.72 + 0.52 * flashAlpha) * (0.92 + Math.random() * 0.18);
+          this.muzzleFlashRig.group.scale.setScalar(baseScale * pulse);
+          this.muzzleFlashRig.frontPlane.rotation.z = Math.random() * Math.PI * 2;
+          const jetRoll = Math.random() * Math.PI;
+          this.muzzleFlashRig.axialA.rotation.x = jetRoll;
+          this.muzzleFlashRig.axialB.rotation.x = jetRoll + Math.PI / 2;
+          // Show compensator side gas vents prominently on ballistic rifles & shotguns
+          const showSideVents = w.id === 0 || w.id === 1;
+          this.muzzleFlashRig.sideJetL.visible = showSideVents;
+          this.muzzleFlashRig.sideJetR.visible = showSideVents;
+        }
+        this.muzzleLight.position.set(this.player.ads ? 0 : 0.22, -0.06, -1.02);
+        this.muzzleLight.color.setHex(w.id === 2 || w.id === 5 ? 0x62e2ff : 0xffb85c);
+        this.muzzleLight.intensity =
+          (w.id === 2 || w.id === 5 ? 14.0 : 12.0) * flashAlpha * (this.player.ads ? 0.72 : 1.0);
       } else {
         this.viewmodel.muzzleFlash.visible = false;
-        this.muzzleSprite.visible = false;
+        this.muzzleFlashRig.group.visible = false;
         this.muzzleLight.intensity = 0;
+      }
+
+      // Sync grounded 1st-person operator lower body / boots directly beneath the player camera!
+      const showLegs =
+        this.phase === 'playing' &&
+        !this.tank.driving &&
+        !this.isAc130Active() &&
+        !this.isHeliRideActive() &&
+        !this.cinematic.isCutsceneActive() &&
+        !this.isFirstPersonSetpieceActive();
+      this.playerBody.root.visible = showLegs;
+      if (showLegs) {
+        const feetY = Math.max(0, this.player.y - 1.7);
+        this.playerBody.root.position.set(this.player.x, feetY, this.player.z);
+        this.playerBody.root.rotation.y = this.player.yaw;
+        const speedMag = Math.hypot(this.player.vx, this.player.vz);
+        const strideAmp = Math.min(0.55, speedMag * 0.055);
+        const legSwing = Math.sin(this.player.vmBob) * strideAmp;
+        this.playerBody.leftLeg.rotation.x = legSwing;
+        this.playerBody.rightLeg.rotation.x = -legSwing;
+        this.playerBody.leftKnee.rotation.x = Math.max(0, -legSwing * 0.75);
+        this.playerBody.rightKnee.rotation.x = Math.max(0, legSwing * 0.75);
       }
 
       if (this.player.bladeTimer > 0) {
@@ -8015,70 +8216,28 @@ export class IronAshEngine {
       }
     }
 
-    // Free Roam Sandbox Director: Endless 3-Way Robot Waves, Artillery, Dropships & Titan Bosses.
-    // Campaign mode skips infinite wave spawning completely and runs curated Mission 01–04 setpieces!
+    // Ensure camera-local muzzleLight & playerBody cleanly hide/decay even while in K2-X Tank or UH-60K Helicopter!
+    if (this.tank.driving || this.isHeliRideActive() || this.isAc130Active()) {
+      this.playerBody.root.visible = false;
+      this.muzzleFlashRig.group.visible = false;
+      if (this.player.muzzleTimer > 0) {
+        this.player.muzzleTimer = Math.max(0, this.player.muzzleTimer - clampedRealDt);
+        this.muzzleLight.intensity *= Math.pow(0.001, clampedRealDt);
+      } else {
+        this.muzzleLight.intensity = 0;
+      }
+    }
+
+    // Free Roam Sandbox Director:
+    // ZERO random pop-in ("갑툭튀") — all 18 tactical garrison enemies (including OMNI-TITAN) are
+    // pre-placed at handcrafted defensive positions across Sector Zero on load!
+    // Only visible skyward artillery warnings & distant flying dropships operate as high-threat events.
     const threatSt = computeThreatState(this.threatPoints);
     if (this.gameMode === 'freeroam') {
-      const spawnBal = computeSpawnBalance(
-        this.wave,
-        this.relaysDestroyed,
-        this.coreShieldDown,
-        threatSt.level
-      );
-      this.spawnCd -= dt;
-      if (this.spawnCd <= 0 && this.units.length < spawnBal.maxActiveUnits) {
-        this.spawnCd = spawnBal.spawnIntervalSec;
-        const sp = this.findSpawnPoint();
-        const roll = Math.random();
-        const spawnPair = spawnBal.batchSize >= 2 && this.units.length + 2 <= spawnBal.maxActiveUnits;
-        if (roll < 0.34) {
-          this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_TROOPER, sp.x, sp.z);
-          if (spawnPair) {
-            this.createEnemy(Faction.RAIDER, UnitArchetype.RAIDER_BERSERKER, sp.x + 1.8, sp.z + 1.4);
-          }
-        } else if (roll < 0.68) {
-          const useSniper = spawnBal.allowSnipers && Math.random() < 0.32;
-          this.createEnemy(
-            Faction.SYNDICATE,
-            useSniper ? UnitArchetype.SYNDICATE_SNIPER : UnitArchetype.SYNDICATE_COMMANDO,
-            sp.x,
-            sp.z
-          );
-          if (spawnPair) {
-            this.createEnemy(Faction.SYNDICATE, UnitArchetype.SYNDICATE_HEAVY, sp.x - 1.8, sp.z + 1.4);
-          }
-        } else {
-          this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_ENFORCER, sp.x, sp.z);
-          if (spawnPair) {
-            this.createEnemy(Faction.ROBOT, UnitArchetype.ROBOT_STALKER, sp.x + 1.6, sp.z - 1.6);
-          }
-        }
-      }
-
       this.artilleryCd -= dt;
       if (this.artilleryCd <= 0) {
-        this.artilleryCd = Math.max(15, 25 - this.wave * 1.1 - threatSt.level * 0.9);
+        this.artilleryCd = Math.max(18, 28 - this.wave * 1.1 - threatSt.level * 0.9);
         this.callArtilleryBarrage();
-      }
-
-      this.dropshipCd -= dt;
-      if (this.dropshipCd <= 0 && (!this.dropship || !this.dropship.alive)) {
-        this.dropshipCd = Math.max(24, 36 - threatSt.level * 2);
-        this.spawnDropship();
-        this.triggerRadioComms('dropship', true);
-      }
-
-      this.bossCd -= dt;
-      if (
-        spawnBal.allowTitanBoss &&
-        this.bossCd <= 0 &&
-        !this.units.some((u) => u.isBoss && u.alive)
-      ) {
-        this.bossCd = 54;
-        const sp = this.findSpawnPoint();
-        this.handleTitanDropImpact({ x: sp.x, y: 0, z: sp.z });
-        this.triggerRadioComms('bossTitan', true);
-        this.showAlert('경고: OMNI-TITAN 오버로드 전장 강하 — 외장 장갑을 파괴하고 코어를 타격하라', 5.0);
       }
     }
 
@@ -8775,38 +8934,38 @@ export class IronAshEngine {
     const endTheme = this.cinematic.getEndingTheme();
     if (dawnP > 0.001) {
       if (endTheme === 'symbiosis') {
-        this._c1.setHex(0x1f0d12).lerp(this._c2.setHex(0x1b4d5c), dawnP);
+        this._c1.setHex(0x111722).lerp(this._c2.setHex(0x1b4d5c), dawnP);
         fog.color.copy(this._c1);
-        fog.density = 0.0102 * (1 - dawnP * 0.45);
-        (this.scene.background as THREE.Color).setHex(0x0c0e17).lerp(this._c2.setHex(0x0d2b3e), dawnP);
-        this.hemiLight.color.setHex(0x88b4e6).lerp(this._c2.setHex(0x7efce0), dawnP);
-        this.hemiLight.groundColor.setHex(0x381e18).lerp(this._c2.setHex(0x1f5963), dawnP);
-        this.hemiLight.intensity = 0.88 + dawnP * 0.52;
-        this.sunLight.color.setHex(0xffb884).lerp(this._c2.setHex(0x9fffe8), dawnP);
-        this.sunLight.intensity = 1.42 + dawnP * 0.55;
+        fog.density = 0.0094 * (1 - dawnP * 0.45);
+        (this.scene.background as THREE.Color).setHex(0x0a0d13).lerp(this._c2.setHex(0x0d2b3e), dawnP);
+        this.hemiLight.color.setHex(0x88a8cf).lerp(this._c2.setHex(0x7efce0), dawnP);
+        this.hemiLight.groundColor.setHex(0x2c3442).lerp(this._c2.setHex(0x1f5963), dawnP);
+        this.hemiLight.intensity = 0.92 + dawnP * 0.48;
+        this.sunLight.color.setHex(0xc8daf0).lerp(this._c2.setHex(0x9fffe8), dawnP);
+        this.sunLight.intensity = 1.95 + dawnP * 0.35;
         if (this.worldRefs) {
           const u = this.worldRefs.skyDomeMat.uniforms;
-          u.topColor.value.setHex(0x060913).lerp(this._c2.setHex(0x09243d), dawnP);
-          u.midColor.value.setHex(0x16101e).lerp(this._c2.setHex(0x178b82), dawnP);
-          u.horizonColor.value.setHex(0x471b18).lerp(this._c2.setHex(0x52f2c8), dawnP);
-          u.glowColor.value.setHex(0x9e2124).lerp(this._c2.setHex(0x7efce0), dawnP);
+          u.topColor.value.setHex(0x090f19).lerp(this._c2.setHex(0x09243d), dawnP);
+          u.midColor.value.setHex(0x182434).lerp(this._c2.setHex(0x178b82), dawnP);
+          u.horizonColor.value.setHex(0x2d3847).lerp(this._c2.setHex(0x52f2c8), dawnP);
+          u.glowColor.value.setHex(0x88533e).lerp(this._c2.setHex(0x7efce0), dawnP);
         }
       } else if (endTheme === 'ascension') {
-        this._c1.setHex(0x1f0d12).lerp(this._c2.setHex(0x2e0b10), dawnP);
+        this._c1.setHex(0x111722).lerp(this._c2.setHex(0x2e0b10), dawnP);
         fog.color.copy(this._c1);
-        fog.density = 0.0102 * (1 - dawnP * 0.22);
-        (this.scene.background as THREE.Color).setHex(0x0c0e17).lerp(this._c2.setHex(0x1a0608), dawnP);
-        this.hemiLight.color.setHex(0x88b4e6).lerp(this._c2.setHex(0xff9b54), dawnP);
-        this.hemiLight.groundColor.setHex(0x381e18).lerp(this._c2.setHex(0x4d1014), dawnP);
-        this.hemiLight.intensity = 0.88 + dawnP * 0.45;
-        this.sunLight.color.setHex(0xffb884).lerp(this._c2.setHex(0xff5a36), dawnP);
-        this.sunLight.intensity = 1.42 + dawnP * 0.62;
+        fog.density = 0.0094 * (1 - dawnP * 0.22);
+        (this.scene.background as THREE.Color).setHex(0x0a0d13).lerp(this._c2.setHex(0x1a0608), dawnP);
+        this.hemiLight.color.setHex(0x88a8cf).lerp(this._c2.setHex(0xff9b54), dawnP);
+        this.hemiLight.groundColor.setHex(0x2c3442).lerp(this._c2.setHex(0x4d1014), dawnP);
+        this.hemiLight.intensity = 0.92 + dawnP * 0.42;
+        this.sunLight.color.setHex(0xc8daf0).lerp(this._c2.setHex(0xff5a36), dawnP);
+        this.sunLight.intensity = 1.95 + dawnP * 0.38;
         if (this.worldRefs) {
           const u = this.worldRefs.skyDomeMat.uniforms;
-          u.topColor.value.setHex(0x060913).lerp(this._c2.setHex(0x140407), dawnP);
-          u.midColor.value.setHex(0x16101e).lerp(this._c2.setHex(0x4a0f14), dawnP);
-          u.horizonColor.value.setHex(0x471b18).lerp(this._c2.setHex(0xff5e1a), dawnP);
-          u.glowColor.value.setHex(0x9e2124).lerp(this._c2.setHex(0xffc145), dawnP);
+          u.topColor.value.setHex(0x090f19).lerp(this._c2.setHex(0x140407), dawnP);
+          u.midColor.value.setHex(0x182434).lerp(this._c2.setHex(0x4a0f14), dawnP);
+          u.horizonColor.value.setHex(0x2d3847).lerp(this._c2.setHex(0xff5e1a), dawnP);
+          u.glowColor.value.setHex(0x88533e).lerp(this._c2.setHex(0xffc145), dawnP);
         }
         this.ascensionArcCd -= dt;
         if (this.ascensionArcCd <= 0 && this.worldRefs) {
@@ -8824,24 +8983,24 @@ export class IronAshEngine {
           );
         }
       } else {
-        this._c1.setHex(0x1f0d12).lerp(this._c2.setHex(0xdcb486), dawnP);
+        this._c1.setHex(0x111722).lerp(this._c2.setHex(0xdcb486), dawnP);
         fog.color.copy(this._c1);
-        fog.density = 0.0102 * (1 - dawnP * 0.52);
-        (this.scene.background as THREE.Color).setHex(0x0c0e17).lerp(this._c2.setHex(0x5a9be0), dawnP);
+        fog.density = 0.0094 * (1 - dawnP * 0.52);
+        (this.scene.background as THREE.Color).setHex(0x0a0d13).lerp(this._c2.setHex(0x5a9be0), dawnP);
 
-        this.hemiLight.color.setHex(0x88b4e6).lerp(this._c2.setHex(0xbde2ff), dawnP);
-        this.hemiLight.groundColor.setHex(0x381e18).lerp(this._c2.setHex(0xd99b66), dawnP);
-        this.hemiLight.intensity = 0.88 + dawnP * 0.48;
+        this.hemiLight.color.setHex(0x88a8cf).lerp(this._c2.setHex(0xbde2ff), dawnP);
+        this.hemiLight.groundColor.setHex(0x2c3442).lerp(this._c2.setHex(0xd99b66), dawnP);
+        this.hemiLight.intensity = 0.92 + dawnP * 0.45;
 
-        this.sunLight.color.setHex(0xffb884).lerp(this._c2.setHex(0xffe0a6), dawnP);
-        this.sunLight.intensity = 1.42 + dawnP * 0.65;
+        this.sunLight.color.setHex(0xc8daf0).lerp(this._c2.setHex(0xffe0a6), dawnP);
+        this.sunLight.intensity = 1.95 + dawnP * 0.45;
 
         if (this.worldRefs) {
           const u = this.worldRefs.skyDomeMat.uniforms;
-          u.topColor.value.setHex(0x060913).lerp(this._c2.setHex(0x286cc2), dawnP);
-          u.midColor.value.setHex(0x16101e).lerp(this._c2.setHex(0x74b3e8), dawnP);
-          u.horizonColor.value.setHex(0x471b18).lerp(this._c2.setHex(0xffc97d), dawnP);
-          u.glowColor.value.setHex(0x9e2124).lerp(this._c2.setHex(0xffe9a8), dawnP);
+          u.topColor.value.setHex(0x090f19).lerp(this._c2.setHex(0x286cc2), dawnP);
+          u.midColor.value.setHex(0x182434).lerp(this._c2.setHex(0x74b3e8), dawnP);
+          u.horizonColor.value.setHex(0x2d3847).lerp(this._c2.setHex(0xffc97d), dawnP);
+          u.glowColor.value.setHex(0x88533e).lerp(this._c2.setHex(0xffe9a8), dawnP);
         }
       }
     } else if (this.relay1FogShift > 0) {
@@ -8998,7 +9157,9 @@ export class IronAshEngine {
         ? this.ac130ThermalMode === 'whot'
           ? 1.0
           : 2.0
-        : 0.0;
+        : this.tank.driving && this.tank.gunnerOptic
+          ? 0.38
+          : 0.0;
       const actionPulse =
         (this.player.dashTimer > 0 ? 0.0042 : 0) +
         (this.player.slideTimer > 0 ? 0.0022 : 0) +

@@ -172,6 +172,13 @@ interface ActiveTracer3D {
   maxAge: number;
   materials: THREE.Material[];
   geometries: THREE.BufferGeometry[];
+  /** Optional supersonic flying streak motion (realistic CoD/Battlefield projectile travel!) */
+  travel?: {
+    start: THREE.Vector3;
+    dir: THREE.Vector3;
+    totalLen: number;
+    streakLen: number;
+  };
 }
 
 interface ActiveSparkDart {
@@ -231,8 +238,10 @@ export class VolumetricVfxSystem {
   private sparks: ActiveSparkDart[] = [];
   private smokes: ActiveSmokePlume[] = [];
   private puffs: ActiveVolumetricPuff[] = [];
+  private ambientPuffs: ActiveVolumetricPuff[] = [];
   private debrisChips: ActiveDebrisChip[] = [];
   private smokePuffTex: THREE.Texture | null = null;
+  private muzzleAxialTex: THREE.Texture | null = null;
   private ambientEmitAccum = 0;
 
   // Shared high-efficiency geometries
@@ -256,6 +265,10 @@ export class VolumetricVfxSystem {
 
   public setSmokeTexture(tex: THREE.Texture): void {
     this.smokePuffTex = tex;
+  }
+
+  public setMuzzleAxialTexture(tex: THREE.Texture): void {
+    this.muzzleAxialTex = tex;
   }
 
   /**
@@ -536,10 +549,54 @@ export class VolumetricVfxSystem {
           maxScale: 1.25,
         });
       }
+    } else if (kind === 'bullet') {
+      // Photorealistic High-Speed Traveling Ballistic Tracer Streak (finite incandescent slug racing to target!)
+      const streakLen = Math.min(len, Math.max(2.6, Math.min(9.5, len * 0.28)));
+      const coreMat = new THREE.MeshBasicMaterial({
+        color: 0xfffaf0,
+        transparent: true,
+        opacity: 0.96,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const glowMat = new THREE.MeshBasicMaterial({
+        color: colorHex,
+        transparent: true,
+        opacity: 0.62,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      materials.push(coreMat, glowMat);
+
+      const core = new THREE.Mesh(this.unitCylGeo, coreMat);
+      core.scale.set(0.015, streakLen, 0.015);
+      group.add(core);
+
+      const glow = new THREE.Mesh(this.unitCylGeo, glowMat);
+      glow.scale.set(0.044, streakLen * 1.12, 0.044);
+      group.add(glow);
+
+      group.quaternion.copy(quat);
+      group.position.copy(p1).addScaledVector(normDir, streakLen * 0.5);
+      this.scene.add(group);
+      this.tracers.push({
+        group,
+        age: 0,
+        maxAge: Math.max(0.055, Math.min(0.14, len / 260)),
+        materials,
+        geometries,
+        travel: {
+          start: p1.clone(),
+          dir: normDir,
+          totalLen: len,
+          streakLen,
+        },
+      });
+      return;
     } else {
-      // 3D Velocity-Stretched Dual-Layer Ballistic Plasma/Tracer Slug
-      const radiusCore = kind === 'laser' ? 0.032 : 0.024;
-      const radiusGlow = kind === 'laser' ? 0.082 : 0.064;
+      // Laser / Directed Energy Beam
+      const radiusCore = 0.026;
+      const radiusGlow = 0.068;
       const coreMat = new THREE.MeshBasicMaterial({
         color: 0xfff8e7,
         transparent: true,
@@ -785,11 +842,13 @@ export class VolumetricVfxSystem {
     maxAge: number;
     isFire?: boolean;
     cap?: number;
+    ambient?: boolean;
   }): void {
     if (!this.smokePuffTex) return;
-    const cap = opts.cap ?? 96;
-    if (this.puffs.length >= cap) {
-      const oldest = this.puffs.shift();
+    const pool = opts.ambient ? this.ambientPuffs : this.puffs;
+    const cap = opts.cap ?? (opts.ambient ? 88 : 96);
+    if (pool.length >= cap) {
+      const oldest = pool.shift();
       if (oldest) {
         this.scene.remove(oldest.sprite);
         oldest.mat.dispose();
@@ -808,7 +867,7 @@ export class VolumetricVfxSystem {
     sprite.position.set(opts.x, opts.y, opts.z);
     sprite.scale.set(opts.startScale, opts.startScale, 1);
     this.scene.add(sprite);
-    this.puffs.push({
+    pool.push({
       sprite,
       mat,
       vx: opts.vx,
@@ -825,6 +884,73 @@ export class VolumetricVfxSystem {
   }
 
   /**
+   * Photorealistic World-Space 3D Crossed-Plane Muzzle Blast (120mm K2-X Tank Cannon, M134, Enemy Fire)
+   * Renders crossed supersonic Mach flame jets + propellant gas cloud + hot ember sparks!
+   */
+  public spawnRealisticMuzzleBlast(
+    pos: THREE.Vector3,
+    dir: THREE.Vector3,
+    colorHex = 0xffc864,
+    scale = 1.0
+  ): void {
+    const normDir = dir.clone().normalize();
+    const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(1, 0, 0), normDir);
+
+    if (this.muzzleAxialTex) {
+      const grp = new THREE.Group();
+      grp.position.copy(pos);
+      grp.quaternion.copy(quat);
+      const roll = Math.random() * Math.PI * 2;
+      const len = 1.15 * scale;
+      const wid = 0.56 * scale;
+      const geo = new THREE.PlaneGeometry(len, wid);
+      geo.translate(len * 0.48, 0, 0);
+      const mat = new THREE.MeshBasicMaterial({
+        map: this.muzzleAxialTex,
+        color: colorHex,
+        transparent: true,
+        opacity: 0.96,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      const p1 = new THREE.Mesh(geo, mat);
+      p1.rotation.x = roll;
+      const p2 = new THREE.Mesh(geo, mat);
+      p2.rotation.x = roll + Math.PI / 2;
+      grp.add(p1, p2);
+      this.scene.add(grp);
+      this.tracers.push({
+        group: grp,
+        age: 0,
+        maxAge: 0.065 + scale * 0.02,
+        materials: [mat],
+        geometries: [geo],
+      });
+    }
+
+    // Pressurized muzzle gas blast + glowing spark spray
+    const puffCount = scale >= 1.5 ? 4 : 2;
+    for (let i = 0; i < puffCount; i++) {
+      this.spawnVolumetricPuff({
+        x: pos.x + normDir.x * (0.25 * scale) + (Math.random() - 0.5) * 0.22 * scale,
+        y: pos.y + normDir.y * (0.25 * scale) + (Math.random() - 0.5) * 0.14 * scale,
+        z: pos.z + normDir.z * (0.25 * scale) + (Math.random() - 0.5) * 0.22 * scale,
+        vx: normDir.x * (2.6 * scale) + (Math.random() - 0.5) * 1.4 * scale,
+        vy: 0.6 + Math.random() * 0.65 * scale,
+        vz: normDir.z * (2.6 * scale) + (Math.random() - 0.5) * 1.4 * scale,
+        colorHex: i === 0 ? 0xd8d2c8 : 0x7c828c,
+        startScale: 0.35 * scale,
+        endScale: (1.5 + i * 0.55) * scale,
+        peakOpacity: scale >= 1.5 ? 0.55 : 0.34,
+        maxAge: 0.65 + Math.random() * 0.45,
+        isFire: false,
+      });
+    }
+    this.spawnSparkBurst(pos, normDir, Math.min(12, Math.round(4 * scale)), colorHex, 8 + scale * 4);
+  }
+
+  /**
    * Continuously emits Call of Duty–style towering black oil smoke columns from burning K-808 APCs
    * and wide drifting cool-white ground steam curtains across Neo-Seoul storm drains.
    */
@@ -833,7 +959,7 @@ export class VolumetricVfxSystem {
     dt: number,
     quality: 'ultra' | 'high'
   ): void {
-    const cap = quality === 'ultra' ? 92 : 54;
+    const cap = quality === 'ultra' ? 86 : 48;
     const interval = quality === 'ultra' ? 0.17 : 0.3;
     this.ambientEmitAccum += dt;
 
@@ -842,7 +968,6 @@ export class VolumetricVfxSystem {
       for (let i = 0; i < plumes.length; i++) {
         const anchor = plumes[i];
         if (anchor.kind === 'oil_fire') {
-          // Billowing thick black-charcoal oil smoke column rising skyward
           this.spawnVolumetricPuff({
             x: anchor.x + (Math.random() - 0.5) * 1.4,
             y: anchor.y + Math.random() * 0.6,
@@ -857,8 +982,8 @@ export class VolumetricVfxSystem {
             maxAge: 3.4 + Math.random() * 1.4,
             isFire: false,
             cap,
+            ambient: true,
           });
-          // Flickering hot engine fire tongue licking the base of the smoke column
           if (Math.random() < 0.72) {
             this.spawnVolumetricPuff({
               x: anchor.x + (Math.random() - 0.5) * 1.1,
@@ -874,10 +999,10 @@ export class VolumetricVfxSystem {
               maxAge: 0.52 + Math.random() * 0.34,
               isFire: true,
               cap,
+              ambient: true,
             });
           }
         } else if (Math.random() < 0.52) {
-          // Low-lying wide drifting street steam curtain (adds atmospheric depth without glare)
           this.spawnVolumetricPuff({
             x: anchor.x + (Math.random() - 0.5) * 3.4,
             y: anchor.y + 0.45 + Math.random() * 0.5,
@@ -892,54 +1017,58 @@ export class VolumetricVfxSystem {
             maxAge: 3.3 + Math.random() * 1.5,
             isFire: false,
             cap,
+            ambient: true,
           });
         }
       }
     }
 
-    // Step all active volumetric sprite puffs (oil smoke, fire tongues, street steam, gunsmoke, concrete dust)
-    for (let i = this.puffs.length - 1; i >= 0; i--) {
-      const pf = this.puffs[i];
-      pf.age += dt;
-      const p = pf.age / pf.maxAge;
-      if (p >= 1) {
-        this.scene.remove(pf.sprite);
-        pf.mat.dispose();
-        this.puffs.splice(i, 1);
-        continue;
+    const stepPool = (pool: ActiveVolumetricPuff[]) => {
+      for (let i = pool.length - 1; i >= 0; i--) {
+        const pf = pool[i];
+        pf.age += dt;
+        const p = pf.age / pf.maxAge;
+        if (p >= 1) {
+          this.scene.remove(pf.sprite);
+          pf.mat.dispose();
+          pool.splice(i, 1);
+          continue;
+        }
+        pf.sprite.position.x += pf.vx * dt * (1 - p * 0.35);
+        pf.sprite.position.y += pf.vy * dt * (1 - p * 0.25);
+        pf.sprite.position.z += pf.vz * dt * (1 - p * 0.35);
+        pf.mat.rotation += pf.rotSpeed * dt;
+        const sc = pf.startScale + (pf.endScale - pf.startScale) * Math.pow(p, 0.78);
+        pf.sprite.scale.set(sc, sc, 1);
+        const fadeIn = Math.min(1, p / 0.16);
+        const fadeOut = Math.pow(1 - p, pf.isFire ? 1.5 : 1.15);
+        pf.mat.opacity = pf.peakOpacity * fadeIn * fadeOut;
       }
-      pf.sprite.position.x += pf.vx * dt * (1 - p * 0.35);
-      pf.sprite.position.y += pf.vy * dt * (1 - p * 0.25);
-      pf.sprite.position.z += pf.vz * dt * (1 - p * 0.35);
-      pf.mat.rotation += pf.rotSpeed * dt;
-      const sc = pf.startScale + (pf.endScale - pf.startScale) * Math.pow(p, 0.78);
-      pf.sprite.scale.set(sc, sc, 1);
-      // Smooth fade-in then gradual billow fade-out
-      const fadeIn = Math.min(1, p / 0.16);
-      const fadeOut = Math.pow(1 - p, pf.isFire ? 1.5 : 1.15);
-      pf.mat.opacity = pf.peakOpacity * fadeIn * fadeOut;
-    }
+    };
+    stepPool(this.ambientPuffs);
+    stepPool(this.puffs);
   }
 
   /**
-   * Delicate rising cordite gunsmoke wisp curling off the barrel/suppressor after each shot.
+   * Delicate rising cordite gunsmoke wisps curling off the barrel/suppressor after each shot.
    */
   public spawnGunsmoke(pos: THREE.Vector3, dir: THREE.Vector3): void {
-    this.spawnVolumetricPuff({
-      x: pos.x + (Math.random() - 0.5) * 0.04,
-      y: pos.y + 0.02,
-      z: pos.z + (Math.random() - 0.5) * 0.04,
-      vx: dir.x * 0.85 + (Math.random() - 0.5) * 0.28,
-      vy: 0.55 + Math.random() * 0.35,
-      vz: dir.z * 0.85 + (Math.random() - 0.5) * 0.28,
-      colorHex: 0xc4ccd6,
-      startScale: 0.14,
-      endScale: 0.68,
-      peakOpacity: 0.32,
-      maxAge: 0.72 + Math.random() * 0.32,
-      isFire: false,
-      cap: 108,
-    });
+    for (let i = 0; i < 2; i++) {
+      this.spawnVolumetricPuff({
+        x: pos.x + dir.x * (i * 0.14) + (Math.random() - 0.5) * 0.05,
+        y: pos.y + 0.02 + i * 0.02,
+        z: pos.z + dir.z * (i * 0.14) + (Math.random() - 0.5) * 0.05,
+        vx: dir.x * (i === 0 ? 1.4 : 0.45) + (Math.random() - 0.5) * 0.35,
+        vy: 0.48 + Math.random() * 0.42,
+        vz: dir.z * (i === 0 ? 1.4 : 0.45) + (Math.random() - 0.5) * 0.35,
+        colorHex: i === 0 ? 0xd2d8e0 : 0x9ca4b0,
+        startScale: i === 0 ? 0.14 : 0.1,
+        endScale: i === 0 ? 0.62 : 0.85,
+        peakOpacity: i === 0 ? 0.34 : 0.22,
+        maxAge: 0.62 + Math.random() * 0.36 + i * 0.18,
+        isFire: false,
+      });
+    }
   }
 
   /**
@@ -1071,7 +1200,7 @@ export class VolumetricVfxSystem {
       sr.mat.uniforms.uProgress.value = p;
     }
 
-    // 3) Update 3D Volumetric Tracers & Railgun Helices
+    // 3) Update 3D Volumetric Tracers, Supersonic Traveling Streaks & Railgun Helices
     for (let i = this.tracers.length - 1; i >= 0; i--) {
       const tr = this.tracers[i];
       tr.age += dt;
@@ -1083,7 +1212,12 @@ export class VolumetricVfxSystem {
         this.tracers.splice(i, 1);
         continue;
       }
-      const fade = 1 - p;
+      if (tr.travel) {
+        const distRange = Math.max(0.1, tr.travel.totalLen - tr.travel.streakLen);
+        const centerDist = tr.travel.streakLen * 0.5 + distRange * p;
+        tr.group.position.copy(tr.travel.start).addScaledVector(tr.travel.dir, centerDist);
+      }
+      const fade = tr.travel ? Math.min(1, (1 - p) * 2.2) : 1 - p;
       for (const m of tr.materials) {
         if ('opacity' in m) (m as THREE.MeshBasicMaterial).opacity = fade * 0.9;
       }
@@ -1205,6 +1339,11 @@ export class VolumetricVfxSystem {
       pf.mat.dispose();
     }
     this.puffs.length = 0;
+    for (const pf of this.ambientPuffs) {
+      this.scene.remove(pf.sprite);
+      pf.mat.dispose();
+    }
+    this.ambientPuffs.length = 0;
     this.fireballGeo.dispose();
     this.shockRingGeo.dispose();
     this.sparkGeo.dispose();

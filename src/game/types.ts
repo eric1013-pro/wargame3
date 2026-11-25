@@ -148,6 +148,8 @@ export interface AabbCollider {
   height: number;
   minY?: number;
   alive: boolean;
+  /** Light urban obstacles (sandbags, crates, bollards, sedans, barricades) crushed effortlessly by K2-X Tank */
+  tankCrushable?: boolean;
 }
 
 export interface VerletNode {

@@ -46,6 +46,7 @@ export interface WorldColliderLike {
   minY?: number;
   mesh: THREE.Object3D;
   destructible: boolean;
+  tankCrushable?: boolean;
   hp: number;
   alive: boolean;
 }
@@ -71,6 +72,7 @@ export interface RelayPylonEntity {
   beamMesh: THREE.Mesh;
   ringMesh: THREE.Mesh;
   hitMesh: THREE.Mesh;
+  collider: WorldColliderLike;
 }
 
 export interface OmniCoreCitadel {
@@ -248,7 +250,8 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
     rotY: number,
     height: number,
     mesh: THREE.Object3D,
-    longAxis: 'x' | 'z'
+    longAxis: 'x' | 'z',
+    tankCrushable = false
   ) => {
     const segs = lengthAlongAxis > widthPerp * 1.45 ? 2 : 1;
     const halfSegLen = lengthAlongAxis / (segs * 2);
@@ -273,6 +276,7 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
         height,
         mesh,
         destructible: false,
+        tankCrushable,
         hp: 9999,
         alive: true,
       });
@@ -314,17 +318,17 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
   const cyanHaloTex = createHaloTexture('#e0f7ff', 'rgba(56, 200, 255, 0.42)');
 
   // =========================================================================
-  // 1) ANIMATED VOLUMETRIC CYBERPUNK SKY DOME (Storm Clouds · Stars · Aurora · Solar Dawn)
+  // 1) PHOTOREALISTIC OVERCAST STORMY NEO-SEOUL SKY DOME (Volumetric Clouds · Pre-Dawn Mist · Aurora)
   // =========================================================================
   const skyDomeMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
     fog: false,
     uniforms: {
-      topColor: { value: new THREE.Color(0x040710) },
-      midColor: { value: new THREE.Color(0x0d1729) },
-      horizonColor: { value: new THREE.Color(0x421c19) },
-      glowColor: { value: new THREE.Color(0xc42d32) },
+      topColor: { value: new THREE.Color(0x090f19) },
+      midColor: { value: new THREE.Color(0x182434) },
+      horizonColor: { value: new THREE.Color(0x2d3847) },
+      glowColor: { value: new THREE.Color(0x88533e) },
       uTime: { value: 0 },
       uAuroraStrength: { value: 0 },
       uSunGlow: { value: 0 },
@@ -919,6 +923,17 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
     scene.add(beamMesh);
 
     scene.add(rGroup);
+    const relayCollider: WorldColliderLike = {
+      minX: spec.x - 1.9,
+      maxX: spec.x + 1.9,
+      minZ: spec.z - 1.9,
+      maxZ: spec.z + 1.9,
+      height: 7.0,
+      mesh: rGroup,
+      destructible: false,
+      hp: 9999,
+      alive: true,
+    };
     const relayEntity: RelayPylonEntity = {
       id: i + 1,
       label: spec.label,
@@ -932,30 +947,32 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
       beamMesh,
       ringMesh,
       hitMesh,
+      collider: relayCollider,
     };
     hitMesh.userData = { isWorld: true, relay: relayEntity };
     coreCrystal.userData = { isWorld: true, relay: relayEntity };
     worldHitMeshes.push(hitMesh, coreCrystal);
 
-    colliders.push({
-      minX: spec.x - 1.9,
-      maxX: spec.x + 1.9,
-      minZ: spec.z - 1.9,
-      maxZ: spec.z + 1.9,
-      height: 7.0,
-      mesh: rGroup,
-      destructible: false,
-      hp: 9999,
-      alive: true,
-    });
+    colliders.push(relayCollider);
     relays.push(relayEntity);
   }
 
+  // Brutalist Korean poured concrete PBR material (formwork joints, tie holes, rain runoff streaks & AO!)
+  const brutalistConcreteMat = new THREE.MeshStandardMaterial({
+    color: 0xd0d6de,
+    map: pbr.seoulConcrete.map,
+    normalMap: pbr.seoulConcrete.normalMap,
+    normalScale: new THREE.Vector2(1.15, 1.15),
+    roughnessMap: pbr.seoulConcrete.roughnessMap,
+    aoMap: pbr.seoulConcrete.aoMap,
+    aoMapIntensity: 0.92,
+    roughness: 0.92,
+    metalness: 0.08,
+    envMapIntensity: 0.45,
+  });
+
   // =========================================================================
-  // 6) LABYRINTHINE CYBERPUNK SERVER MAZE WALLS (High-Craft Sculpted Server Bulkheads!)
-  //    Every wall features PBR titanium server rack panels, beveled steel plinths,
-  //    vertical exo-pillars, overhanging roof cap, overhead conduits & neon corridor strips!
-  //    Corridors are strictly >= 6.5m wide with verified loops & flanking alleys!
+  // 6) NEO-SEOUL REINFORCED ARCHITECTURAL BULKHEADS & COMMERCIAL BLOCKS
   // =========================================================================
   const addMazeWall = (
     x: number,
@@ -969,40 +986,43 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
     const grp = new THREE.Group();
     grp.position.set(x, 0, z);
 
-    // Armored beveled base plinth
-    const plinth = new THREE.Mesh(new THREE.BoxGeometry(w + 0.55, 0.9, d + 0.55), matCache.armorPlate);
-    plinth.position.y = 0.45;
+    // Armored concrete curb base plinth
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(w + 0.52, 0.95, d + 0.52), matCache.armorPlate);
+    plinth.position.y = 0.475;
     plinth.receiveShadow = true;
     grp.add(plinth);
 
-    // Main server-rack PBR wall core
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), matCache.concrete);
+    // Main weathered Seoul architectural concrete wall core
+    const wall = new THREE.Mesh(
+      new THREE.BoxGeometry(w, h, d),
+      kind === 'bunker' ? brutalistConcreteMat : matCache.concrete
+    );
     wall.position.y = h / 2;
     wall.castShadow = !isSoftwareGl;
     wall.receiveShadow = true;
     grp.add(wall);
 
-    // Overhanging heavy steel cap cornice
-    const cap = new THREE.Mesh(new THREE.BoxGeometry(w + 0.65, 0.52, d + 0.65), matCache.darkIron);
-    cap.position.y = h + 0.25;
+    // Overhanging heavy poured-concrete cornice & steel roof coping
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(w + 0.65, 0.54, d + 0.65), matCache.darkIron);
+    cap.position.y = h + 0.27;
     grp.add(cap);
 
-    // Corner structural steel I-beams
+    // Corner structural steel I-beam columns & horizontal expansion molding
     for (const sx of [-1, 1]) {
       for (const sz of [-1, 1]) {
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.45, h + 0.6, 0.45), matCache.darkIron);
-        post.position.set(sx * (w / 2 + 0.08), (h + 0.6) / 2, sz * (d / 2 + 0.08));
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.46, h + 0.62, 0.46), matCache.darkIron);
+        post.position.set(sx * (w / 2 + 0.08), (h + 0.62) / 2, sz * (d / 2 + 0.08));
         grp.add(post);
       }
     }
 
-    // Dual-height neon cyberpunk corridor telemetry light strips
-    const stripTop = new THREE.Mesh(new THREE.BoxGeometry(w + 0.14, 0.14, d + 0.14), glowMat);
-    stripTop.position.y = h - 0.55;
-    grp.add(stripTop);
-    const stripMid = new THREE.Mesh(new THREE.BoxGeometry(w + 0.12, 0.08, d + 0.12), glowMat);
-    stripMid.position.y = 1.65;
-    grp.add(stripMid);
+    // Grounded architectural steel trim band & recessed security beacon (replaces flat cartoon neon strips!)
+    const trimBand = new THREE.Mesh(new THREE.BoxGeometry(w + 0.18, 0.24, d + 0.18), matCache.darkIron);
+    trimBand.position.y = h - 0.58;
+    grp.add(trimBand);
+    const beaconSlot = new THREE.Mesh(new THREE.BoxGeometry(Math.min(2.2, w * 0.24), 0.11, d + 0.22), glowMat);
+    beaconSlot.position.y = h - 0.58;
+    grp.add(beaconSlot);
 
     // Add spinning exhaust turbine on large corner server bunkers
     if (kind === 'bunker') {
@@ -1177,23 +1197,24 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
       height: 1.45,
       mesh: grp,
       destructible: false,
+      tankCrushable: true,
       hp: 9999,
       alive: true,
     });
   };
 
-  // Balanced chest-high cover barricades across all 3 tactical lanes
-  addSlopedBarricade(-6.2, 16, 4.0, -0.14);
-  addSlopedBarricade(6.2, 16, 4.0, 0.14);
-  addSlopedBarricade(-5.2, 3.5, 3.6, 0.12);
-  addSlopedBarricade(5.2, 3.5, 3.6, -0.12);
-  addSlopedBarricade(-5.8, -15, 4.2, 0.18);
-  addSlopedBarricade(5.8, -15, 4.2, -0.18);
+  // Balanced chest-high cover barricades framing wide 11m+ armored boulevard (crushable by K2-X Tank!)
+  addSlopedBarricade(-7.8, 16, 3.6, -0.14);
+  addSlopedBarricade(7.8, 16, 3.6, 0.14);
+  addSlopedBarricade(-7.4, 3.5, 3.2, 0.12);
+  addSlopedBarricade(7.4, 3.5, 3.2, -0.12);
+  addSlopedBarricade(-7.6, -14.5, 3.8, 0.18);
+  addSlopedBarricade(7.6, -14.5, 3.8, -0.18);
   addSlopedBarricade(-21, -2, 4.2, Math.PI / 2);
   addSlopedBarricade(21, -2, 4.2, Math.PI / 2);
 
   // =========================================================================
-  // 9) OUTER FORTRESS PERIMETER + BURNING CYBERPUNK MEGACITY SKYLINE RING
+  // 9) OUTER FORTRESS PERIMETER + PHOTOREALISTIC SEOUL GLASS CURTAIN-WALL SKYLINE RING
   // =========================================================================
   const perimSpan = ARENA_HALF_SIZE * 2;
   const perimDefs: Array<[number, number, number, number, number]> = [
@@ -1203,7 +1224,7 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
     [ARENA_HALF_SIZE, 0, 2.4, 7.2, perimSpan],
   ];
   for (const [px, pz, pw, ph, pd] of perimDefs) {
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(pw, ph, pd), matCache.concrete);
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(pw, ph, pd), brutalistConcreteMat);
     wall.position.set(px, ph / 2, pz);
     wall.receiveShadow = true;
     wall.userData = { isWorld: true };
@@ -1222,50 +1243,82 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
     });
   }
 
-  const skyTowerMat = new THREE.MeshStandardMaterial({
-    color: 0x0b0f1a,
-    emissive: 0xffffff,
-    emissiveMap: ctx.textures.skylineWindowMap,
-    emissiveIntensity: 0.46,
-    roughness: 0.74,
-    metalness: 0.46,
+  // Photorealistic smoked architectural curtain-wall skyscraper glass PBR (mirrors storm sky & warm offices!)
+  const skyTowerGlassMat = new THREE.MeshStandardMaterial({
+    color: 0xdce4ee,
+    map: pbr.skyscraperGlass.map,
+    normalMap: pbr.skyscraperGlass.normalMap,
+    normalScale: new THREE.Vector2(0.85, 0.85),
+    roughnessMap: pbr.skyscraperGlass.roughnessMap,
+    aoMap: pbr.skyscraperGlass.aoMap,
+    aoMapIntensity: 0.78,
+    emissive: 0xffe4be,
+    emissiveMap: pbr.skyscraperGlass.map,
+    emissiveIntensity: 0.34,
+    roughness: 0.92,
+    metalness: 0.56,
+    envMapIntensity: 1.35,
+  });
+  const skyTowerConcreteMat = new THREE.MeshStandardMaterial({
+    color: 0x525b68,
+    map: pbr.seoulConcrete.map,
+    normalMap: pbr.seoulConcrete.normalMap,
+    roughnessMap: pbr.seoulConcrete.roughnessMap,
+    roughness: 0.88,
+    metalness: 0.14,
+    envMapIntensity: 0.45,
   });
   for (let i = 0; i < 36; i++) {
     const ang = (i / 36) * Math.PI * 2;
     const dist = ARENA_HALF_SIZE + 18 + (i % 4) * 12;
-    const bh = 34 + ((i * 23) % 60);
-    const bw = 11 + ((i * 7) % 13);
+    const bh = 36 + ((i * 23) % 62);
+    const bw = 12 + ((i * 7) % 13);
+    const bd = 11 + ((i * 5) % 10);
     const bx = Math.cos(ang) * dist;
     const bz = Math.sin(ang) * dist;
+    const tGrp = new THREE.Group();
+    tGrp.position.set(bx, 0, bz);
+    tGrp.rotation.y = -ang + Math.PI / 2;
 
-    const tower = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bw), skyTowerMat);
-    tower.position.set(bx, bh / 2, bz);
-    scene.add(tower);
-    const crown = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.62, bh * 0.22, bw * 0.62), skyTowerMat);
-    crown.position.set(bx, bh + bh * 0.1, bz);
-    scene.add(crown);
+    // Podium base + glossy curtain-wall shaft + architectural setback crown + rooftop HVAC penthouse
+    const podium = new THREE.Mesh(new THREE.BoxGeometry(bw + 1.6, 10, bd + 1.6), skyTowerConcreteMat);
+    podium.position.y = 5;
+    tGrp.add(podium);
+
+    const tower = new THREE.Mesh(new THREE.BoxGeometry(bw, bh, bd), skyTowerGlassMat);
+    tower.position.y = bh / 2;
+    tGrp.add(tower);
+
+    // Architectural concrete spandrel trim belt mid-tower & roof parapet
+    const midBelt = new THREE.Mesh(new THREE.BoxGeometry(bw + 0.45, 0.9, bd + 0.45), matCache.darkIron);
+    midBelt.position.y = bh * 0.55;
+    tGrp.add(midBelt);
+    const roofCap = new THREE.Mesh(new THREE.BoxGeometry(bw + 0.6, 1.1, bd + 0.6), matCache.darkIron);
+    roofCap.position.y = bh + 0.5;
+    tGrp.add(roofCap);
+
+    const crownH = bh * 0.22;
+    const crown = new THREE.Mesh(
+      new THREE.BoxGeometry(bw * 0.64, crownH, bd * 0.64),
+      i % 2 === 0 ? skyTowerGlassMat : skyTowerConcreteMat
+    );
+    crown.position.y = bh + crownH * 0.5;
+    tGrp.add(crown);
+
+    // Rooftop mechanical HVAC penthouse & twin telecom spires with subtle red aviation beacons
+    const hvac = new THREE.Mesh(new THREE.BoxGeometry(bw * 0.34, 2.8, bd * 0.32), matCache.darkIron);
+    hvac.position.set(bw * 0.14, bh + crownH + 1.4, 0);
+    tGrp.add(hvac);
 
     if (i % 3 === 0) {
-      const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.38, 14, 6), matCache.darkIron);
-      spire.position.set(bx, bh + bh * 0.21 + 7, bz);
-      scene.add(spire);
-      const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.7, 6, 6), crimsonGlow);
-      beacon.position.set(bx, bh + bh * 0.21 + 14.2, bz);
-      scene.add(beacon);
+      const spire = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.36, 15, 6), matCache.darkIron);
+      spire.position.set(-bw * 0.14, bh + crownH + 7.5, 0);
+      tGrp.add(spire);
+      const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.55, 6, 6), crimsonGlow);
+      beacon.position.set(-bw * 0.14, bh + crownH + 15.2, 0);
+      tGrp.add(beacon);
     }
-    if (i % 2 === 0) {
-      const winBand = new THREE.Mesh(
-        new THREE.BoxGeometry(bw * 0.56, 0.9, 0.5),
-        i % 4 === 0 ? cyanGlow : amberGlow
-      );
-      winBand.position.set(
-        Math.cos(ang) * (dist - bw * 0.53),
-        bh * (0.45 + ((i * 11) % 35) / 100),
-        Math.sin(ang) * (dist - bw * 0.53)
-      );
-      winBand.lookAt(0, winBand.position.y, 0);
-      scene.add(winBand);
-    }
+    scene.add(tGrp);
   }
 
   // Sweeping Giant Crimson & Cold-Cyan Searchlights
@@ -1356,6 +1409,7 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
       height: 1.55,
       mesh,
       destructible: true,
+      tankCrushable: true,
       hp: 45,
       alive: true,
     };
@@ -1708,17 +1762,17 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
   scene.add(rescueShuttle);
 
   // =========================================================================
-  // 15) NEO-SEOUL STREET BOLLARD LAMPS & DIRECTIONAL JUNCTION SIGNS (GTA Urban Scale)
+  // 15) NEO-SEOUL STREET BOLLARD LAMPS & DIRECTIONAL JUNCTION SIGNS (Curb-Aligned, Tank-Crushable!)
   // =========================================================================
   const bollardCoords: Array<[number, number, THREE.Material]> = [
-    [-5.8, 28, amberGlow],
-    [5.8, 28, amberGlow],
-    [-5.8, 19, amberGlow],
-    [5.8, 19, amberGlow],
-    [-5.8, -11, crimsonGlow],
-    [5.8, -11, crimsonGlow],
-    [-5.8, -22, crimsonGlow],
-    [5.8, -22, crimsonGlow],
+    [-8.8, 28, amberGlow],
+    [8.8, 28, amberGlow],
+    [-8.8, 19, amberGlow],
+    [8.8, 19, amberGlow],
+    [-8.8, -11, crimsonGlow],
+    [8.8, -11, crimsonGlow],
+    [-8.8, -22, crimsonGlow],
+    [8.8, -22, crimsonGlow],
     [-12.5, 17, amberGlow],
     [-19, -6, amberGlow],
     [12.5, 17, amberGlow],
@@ -1754,6 +1808,7 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
       height: 3.3,
       mesh: bGrp,
       destructible: false,
+      tankCrushable: true,
       hp: 9999,
       alive: true,
     });
@@ -1863,14 +1918,16 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
     envMapIntensity: 0.25,
   });
   const weatheredConcreteMat = new THREE.MeshStandardMaterial({
-    color: 0x5c6068,
-    map: pbr.seoulFacade.map,
-    normalMap: pbr.seoulFacade.normalMap,
-    normalScale: new THREE.Vector2(0.85, 0.85),
-    roughnessMap: pbr.seoulFacade.roughnessMap,
-    roughness: 0.92,
-    metalness: 0.06,
-    envMapIntensity: 0.3,
+    color: 0xa4acb8,
+    map: pbr.seoulConcrete.map,
+    normalMap: pbr.seoulConcrete.normalMap,
+    normalScale: new THREE.Vector2(1.15, 1.15),
+    roughnessMap: pbr.seoulConcrete.roughnessMap,
+    aoMap: pbr.seoulConcrete.aoMap,
+    aoMapIntensity: 0.9,
+    roughness: 0.9,
+    metalness: 0.08,
+    envMapIntensity: 0.45,
   });
 
   // A) Authentic Korean Road Markings (Crosswalks + "천천히" Stencils + Double Yellow Centerlines)
@@ -2337,12 +2394,12 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
     scene.add(ac);
   }
 
-  // G) Sculpted Military Burlap Sandbag Fortifications (Loaded from organic sandbag_bunker.glb + exact rotated collider!)
+  // G) Sculpted Military Burlap Sandbag Fortifications (Widened for K2-X Tank Avenue + Tank-Crushable!)
   const sandbagCoords: Array<[number, number, number]> = [
-    [-4.2, 21.5, 0.14],
-    [4.2, 21.5, -0.14],
-    [-3.8, -13.5, -0.18],
-    [3.8, -13.5, 0.18],
+    [-6.6, 21.5, 0.14],
+    [6.6, 21.5, -0.14],
+    [-6.6, -13.5, -0.18],
+    [6.6, -13.5, 0.18],
     [-23.5, -2.5, Math.PI / 2],
     [23.5, -2.5, Math.PI / 2],
   ];
@@ -2359,7 +2416,7 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
     scene.add(sbGrp);
     sandbagAnchors.push(sbGrp);
 
-    // Rotated ballistic hit proxy & exact collider matching sandbag_bunker.glb
+    // Rotated ballistic hit proxy & exact collider matching sandbag_bunker.glb (tankCrushable!)
     const sbHitProxy = new THREE.Mesh(
       new THREE.BoxGeometry(3.25, 1.15, 0.96),
       new THREE.MeshBasicMaterial({ visible: false })
@@ -2369,13 +2426,13 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
     sbHitProxy.userData = { isWorld: true, surface: 'concrete' };
     scene.add(sbHitProxy);
     worldHitMeshes.push(sbHitProxy);
-    addRotatedHullColliders(sx, sz, 3.25, 0.96, ry, 1.22, sbGrp, 'x');
+    addRotatedHullColliders(sx, sz, 3.25, 0.96, ry, 1.22, sbGrp, 'x', true);
   }
 
-  // H) Sculpted Wrecked Korean 4-Door Sedans (Loaded from korean_sedan.glb + exact 2-segment rotated hull colliders!)
+  // H) Sculpted Wrecked Korean 4-Door Sedans (Curb-Positioned + Tank-Crushable!)
   const sedanDefs: Array<[number, number, number, number]> = [
-    [6.8, 11.2, -0.34, 0x9ca7b4],
-    [-8.2, 23.2, 0.42, 0x607086],
+    [8.6, 11.2, -0.34, 0x9ca7b4],
+    [-8.6, 23.2, 0.42, 0x607086],
     [18.5, -14.5, 1.24, 0x8e3a34],
   ];
   for (const [vx, vz, ry, paintHex] of sedanDefs) {
@@ -2400,13 +2457,13 @@ export function buildOmniCoreWorld(ctx: WorldBuildContext): BuiltWorldRefs {
     carHitProxy.userData = { isWorld: true, surface: 'metal' };
     scene.add(carHitProxy);
     worldHitMeshes.push(carHitProxy);
-    addRotatedHullColliders(vx, vz, 4.36, 1.88, ry, 1.5, car, 'z');
+    addRotatedHullColliders(vx, vz, 4.36, 1.88, ry, 1.5, car, 'z', true);
   }
 
-  // I) 3 Burning ROK K-808 8x8 Armored Personnel Carriers (Loaded from high-poly k808_apc.glb + exact 2-segment rotated colliders!)
+  // I) 3 Burning ROK K-808 8x8 Armored Personnel Carriers (Flanking 13m+ Wide Northern Boulevard!)
   const k808Coords: Array<[number, number, number]> = [
-    [-8.8, -16.5, 0.42],
-    [9.4, -18.2, -0.65],
+    [-10.4, -16.8, 0.42],
+    [10.6, -18.2, -0.65],
     [-28.8, -19.8, 1.15],
   ];
   for (const [kx, kz, ry] of k808Coords) {

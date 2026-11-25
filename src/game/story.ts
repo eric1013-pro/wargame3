@@ -575,13 +575,13 @@ export const ARSENAL_DOSSIERS: ArsenalDossier[] = [
 
 export const RADIO_SCRIPTS: Record<string, RadioScript> = {
   deploy: {
-    speaker: '소재우 중사',
-    role: '제1특수임무여단 알파 분대장',
+    speaker: '발키리-01 · 강서연 대위',
+    role: '궤도 전술 지휘관',
     channel: 'ally',
-    sender: 'squad',
-    callsignCode: 'ALPHA-1',
-    accentCss: '#2ee6a6',
-    text: '신호 전까지 움직이지 마! 전방 11시 장갑차 피격—연막 뿌리고 교두보 확보해!',
+    sender: 'valkyrie',
+    callsignCode: 'VALK-01',
+    accentCss: '#f5b342',
+    text: '네오-서울 섹터 제로 진입 확인. 전 구역 고정 배치 수비대 18기 및 전방 K2-X 흑표 전차 좌표 동기화 완료—단독 돌파를 시작하라.',
     duration: 5.2,
   },
   ghostIntro: {

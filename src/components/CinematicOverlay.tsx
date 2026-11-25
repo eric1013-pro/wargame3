@@ -211,11 +211,11 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
         >
           <div className="w-full max-w-5xl max-h-[82vh] overflow-y-auto px-1 py-2 animate-panel-in">
             <div className="text-center mb-5">
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-[3px] bg-[#070b14]/88 border border-[#38d9ff]/45 backdrop-blur-md text-[10px] font-tactical font-bold tracking-[0.22em] text-[#38d9ff] uppercase">
+              <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-[#090e19]/82 border border-[#38d9ff]/35 backdrop-blur-xl text-[10px] font-tactical font-bold tracking-[0.2em] text-[#38d9ff] uppercase">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#38d9ff] animate-pulse" />
                 <span>OMNI-CORE MAINFRAME INTERFACE // ZERO HOUR DECISION</span>
               </div>
-              <h2 className="mt-2.5 font-display text-3xl sm:text-5xl font-extrabold tracking-[0.05em] text-[#f8fafc] game-text-outline">
+              <h2 className="mt-2.5 font-display text-3xl sm:text-5xl font-extrabold tracking-[0.04em] text-[#f8fafc] game-text-outline">
                 지구와 인류의 최후 결말을 선택하라
               </h2>
               <p className="mt-1.5 inline-flex flex-wrap items-center justify-center gap-1.5 text-xs sm:text-sm text-[#cbd5e1] game-text-outline">
@@ -244,33 +244,32 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
                       e.currentTarget.blur();
                       onChooseEnding(endId);
                     }}
-                    className="group relative h-full text-left flex flex-col overflow-hidden rounded-[5px] bg-[#0a0e18]/92 backdrop-blur-md border border-white/15 hover:border-white/60 transition-all duration-250 hover:-translate-y-1.5 cursor-pointer"
+                    className="group relative h-full text-left flex flex-col overflow-hidden rounded-2xl bg-[#0a101c]/86 backdrop-blur-2xl border border-white/[0.12] hover:border-white/45 transition-all duration-250 hover:-translate-y-1.5 cursor-pointer"
                     style={{
-                      borderTop: `2.5px solid ${prof.accentCss}`,
-                      boxShadow: `0 24px 48px -12px rgba(0,0,0,0.88), 0 0 28px -14px ${prof.accentCss}66`,
+                      boxShadow: `0 24px 48px -12px rgba(0,0,0,0.88), 0 0 28px -14px ${prof.accentCss}55`,
                     }}
                   >
                     <div className="relative h-28 sm:h-32 w-full overflow-hidden bg-[#07090d]">
                       <img
                         src={prof.imageUrl}
                         alt={prof.title}
-                        className="w-full h-full object-cover object-center opacity-88 group-hover:scale-106 group-hover:opacity-100 transition-all duration-500"
+                        className="w-full h-full object-cover object-center opacity-88 group-hover:scale-105 group-hover:opacity-100 transition-all duration-500"
                       />
                       <div
                         className="absolute inset-0"
                         style={{
                           background:
-                            'linear-gradient(180deg, rgba(8,10,16,0.16) 0%, rgba(10,14,24,0.96) 100%)',
+                            'linear-gradient(180deg, rgba(8,10,16,0.12) 0%, rgba(10,16,28,0.96) 100%)',
                         }}
                       />
-                      <div className="absolute top-2.5 left-3 right-3 flex items-center justify-between gap-2">
+                      <div className="absolute top-3 left-3 right-3 flex items-center justify-between gap-2">
                         <span
-                          className="px-2 py-0.5 text-[10px] font-tactical font-extrabold rounded-[3px] text-[#07080a] shadow-sm"
+                          className="px-2.5 py-0.5 text-[10px] font-tactical font-extrabold rounded-full text-[#07080a] shadow-sm"
                           style={{ backgroundColor: prof.accentCss }}
                         >
                           KEY [{prof.keyHint}]
                         </span>
-                        <span className="px-2 py-0.5 rounded-[2px] bg-[#070a12]/75 text-[9.5px] font-tactical font-semibold text-[#e2e8f0]">
+                        <span className="px-2.5 py-0.5 rounded-full bg-[#070a12]/72 backdrop-blur-md text-[9.5px] font-tactical font-semibold text-[#e2e8f0]">
                           {prof.choiceTag}
                         </span>
                       </div>
@@ -293,7 +292,7 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
                       </div>
 
                       <div
-                        className="pl-2.5 py-1.5 pr-2 rounded-r-[3px] bg-white/[0.03] border-l-2 text-[11px] text-[#e2e8f0] leading-snug break-keep"
+                        className="pl-3 py-2 pr-2.5 rounded-r-xl bg-white/[0.035] border-l-2 text-[11px] text-[#e2e8f0] leading-snug break-keep"
                         style={{ borderColor: prof.accentCss }}
                       >
                         <div className="font-tactical text-[9.5px] text-[#94a3b8] mb-0.5">
@@ -303,7 +302,7 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
                       </div>
 
                       <div
-                        className="w-full py-2 text-center font-tactical text-xs font-bold tracking-wider uppercase rounded-[3px] border transition-all group-hover:brightness-115"
+                        className="w-full py-2 text-center font-tactical text-xs font-bold tracking-wider uppercase rounded-xl border transition-all group-hover:brightness-115"
                         style={{
                           borderColor: `${prof.accentCss}99`,
                           color: prof.accentCss,
@@ -362,47 +361,40 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
         </div>
       )}
 
-      {/* 8) CALL OF DUTY–STYLE TACTICAL RADIO SUBTITLE BAR WITH PORTRAIT & VHF WAVEFORM */}
+      {/* 8) APPLE DYNAMIC-ISLAND × CoD TACTICAL RADIO SUBTITLE BAR */}
       {comms && !isChoiceActive && (
         <div
           key={`comms-${comms.id}`}
-          className={`fixed left-1/2 -translate-x-1/2 px-4 pointer-events-none transition-all duration-250 animate-comms-enter ${
-            cinematic.letterbox ? 'bottom-[12.2vh]' : 'bottom-6'
+          className={`fixed left-1/2 -translate-x-1/2 px-4 pointer-events-none transition-all duration-300 animate-comms-enter ${
+            cinematic.letterbox ? 'bottom-[12.2vh]' : 'bottom-[152px] sm:bottom-[156px]'
           }`}
           style={{
-            maxWidth: 'min(92vw, 660px)',
+            maxWidth: cinematic.letterbox ? 'min(92vw, 620px)' : 'min(82vw, 490px)',
           }}
           data-testid="cinematic-subtitle-bar"
         >
-          <div
-            className="inline-flex items-center gap-3.5 px-3.5 py-2.5 rounded-[5px] bg-[#060b14]/88 backdrop-blur-md border border-white/[0.12] shadow-[0_14px_36px_rgba(0,0,0,0.82)]"
-            style={{
-              borderLeft: `3px solid ${comms.accentCss}`,
-              boxShadow: `0 14px 36px rgba(0,0,0,0.82), inset 0 1px 0 rgba(255,255,255,0.08)`,
-            }}
-          >
+          <div className="inline-flex items-center gap-3.5 px-4 py-3 rounded-2xl bg-[#0a0f1a]/82 backdrop-blur-2xl border border-white/[0.12] shadow-[0_20px_50px_rgba(0,0,0,0.78)]">
             <div className="relative shrink-0">
               <img
                 src={getPortraitUrlForComms(comms.sender, comms.speaker)}
                 alt={comms.speaker}
-                className="w-11 h-11 rounded-[4px] object-cover border shadow-md"
-                style={{ borderColor: `${comms.accentCss}99` }}
+                className="w-11 h-11 rounded-xl object-cover border border-white/15 shadow-md"
               />
               <span
-                className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full animate-pulse border-2 border-[#060b14]"
+                className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full animate-pulse border-2 border-[#0a0f1a]"
                 style={{ backgroundColor: comms.accentCss }}
               />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2.5">
                 <span
-                  className="font-tactical text-[10.5px] sm:text-[11px] font-extrabold tracking-wide whitespace-nowrap"
+                  className="text-[11px] font-bold tracking-tight whitespace-nowrap"
                   style={{ color: comms.accentCss }}
                 >
                   {comms.speaker.split('·')[0].trim()}
-                  {comms.lineIndex && comms.lineTotal ? ` [${comms.lineIndex}/${comms.lineTotal}]` : ''}
+                  {comms.lineIndex && comms.lineTotal ? ` (${comms.lineIndex}/${comms.lineTotal})` : ''}
                 </span>
-                {/* Animated VHF Tactical Signal Waveform */}
+                {/* Minimal Animated VHF Audio Waveform */}
                 <span className="inline-flex items-end gap-[2px] h-2.5" aria-hidden="true">
                   {[0.45, 0.95, 0.65, 1.0, 0.5].map((hScale, idx) => (
                     <span
@@ -418,16 +410,16 @@ export const CinematicOverlay: React.FC<CinematicOverlayProps> = ({
                     />
                   ))}
                 </span>
-                <span className="text-[9px] font-tactical tracking-[0.18em] text-white/50 uppercase">
-                  VHF // CH-01
+                <span className="text-[9.5px] font-tactical tracking-[0.12em] text-white/40 uppercase">
+                  VHF
                 </span>
               </div>
               <p
                 className="text-xs sm:text-[13.5px] font-medium text-[#f8fafc] leading-snug break-keep mt-0.5"
                 style={
                   comms.sender === 'arcadia'
-                    ? { textShadow: '-1px 0 rgba(255,68,52,0.55), 1px 0 rgba(56,217,255,0.35)' }
-                    : { textShadow: '0 1px 4px rgba(0,0,0,0.9)' }
+                    ? { textShadow: '-1px 0 rgba(255,68,52,0.5), 1px 0 rgba(56,217,255,0.3)' }
+                    : undefined
                 }
               >
                 {comms.text}

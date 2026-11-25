@@ -885,13 +885,115 @@ export function buildViewmodelRig(
   };
 }
 
+export interface PlayerBodyRig {
+  root: THREE.Group;
+  leftLeg: THREE.Group;
+  rightLeg: THREE.Group;
+  leftKnee: THREE.Group;
+  rightKnee: THREE.Group;
+}
+
+/**
+ * Builds grounded 1st-person ROK Tier-1 Operator lower body & tactical combat boots
+ * visible when looking downward (CoD / Battlefield full-body immersion!).
+ */
+export function buildPlayerFirstPersonBody(pbr: ExtendedPbrLibrary): PlayerBodyRig {
+  const root = new THREE.Group();
+  root.name = 'PlayerFirstPersonBody';
+
+  const trouserMat = new THREE.MeshStandardMaterial({
+    color: 0xc2cbc6,
+    map: pbr.rokCamo.map,
+    normalMap: pbr.rokCamo.normalMap,
+    normalScale: new THREE.Vector2(0.85, 0.85),
+    roughnessMap: pbr.rokCamo.roughnessMap,
+    aoMap: pbr.rokCamo.aoMap,
+    aoMapIntensity: 0.8,
+    roughness: 0.92,
+    metalness: 0.05,
+    envMapIntensity: 0.35,
+  });
+  const armorMat = new THREE.MeshStandardMaterial({
+    color: 0xbac4d0,
+    map: pbr.carbonArmor.map,
+    normalMap: pbr.carbonArmor.normalMap,
+    normalScale: new THREE.Vector2(0.9, 0.9),
+    roughnessMap: pbr.carbonArmor.roughnessMap,
+    aoMap: pbr.carbonArmor.aoMap,
+    aoMapIntensity: 0.85,
+    roughness: 0.46,
+    metalness: 0.56,
+    envMapIntensity: 0.75,
+  });
+  const bootMat = new THREE.MeshStandardMaterial({
+    color: 0x1d2128,
+    normalMap: pbr.kevlarGlove.normalMap,
+    roughness: 0.86,
+    metalness: 0.12,
+    envMapIntensity: 0.4,
+  });
+
+  // Lower plate-carrier belt & waist rig (pushed slightly back so it never clips camera pitch)
+  const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.19, 0.14, 14), armorMat);
+  belt.scale.set(1.18, 1, 0.72);
+  belt.position.set(0, 0.88, 0.14);
+  root.add(belt);
+
+  const makeLeg = (sx: -1 | 1) => {
+    const leg = new THREE.Group();
+    leg.position.set(sx * 0.145, 0.84, 0.14);
+
+    const thigh = new THREE.Mesh(new THREE.CapsuleGeometry(0.088, 0.28, 6, 12), trouserMat);
+    thigh.position.set(0, -0.20, 0);
+    leg.add(thigh);
+
+    const holster = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.18, 0.14), armorMat);
+    holster.position.set(sx * 0.086, -0.20, -0.02);
+    leg.add(holster);
+
+    const knee = new THREE.Group();
+    knee.position.set(0, -0.41, 0);
+
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(0.115, 0.125, 0.068), armorMat);
+    pad.position.set(0, 0.01, -0.072);
+    knee.add(pad);
+
+    const shin = new THREE.Mesh(new THREE.CapsuleGeometry(0.072, 0.28, 6, 12), trouserMat);
+    shin.position.set(0, -0.21, 0);
+    knee.add(shin);
+
+    // Matte ballistic combat boot pointing forward (-Z in player space!)
+    const bootUpper = new THREE.Mesh(new THREE.BoxGeometry(0.128, 0.115, 0.27), bootMat);
+    bootUpper.position.set(0, -0.37, -0.055);
+    knee.add(bootUpper);
+    const bootSole = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.042, 0.295), armorMat);
+    bootSole.position.set(0, -0.42, -0.058);
+    knee.add(bootSole);
+
+    leg.add(knee);
+    root.add(leg);
+    return { leg, knee };
+  };
+
+  const left = makeLeg(-1);
+  const right = makeLeg(1);
+
+  return {
+    root,
+    leftLeg: left.leg,
+    rightLeg: right.leg,
+    leftKnee: left.knee,
+    rightKnee: right.knee,
+  };
+}
+
 export interface EnemyRig {
   root: THREE.Group;
   parts: Partial<Record<BodyPart, THREE.Object3D>>;
   knees?: { left?: THREE.Object3D; right?: THREE.Object3D };
   elbows?: { left?: THREE.Object3D; right?: THREE.Object3D };
   mats: THREE.MeshStandardMaterial[];
-  visorMat: THREE.MeshBasicMaterial;
+  visorMat: THREE.MeshBasicMaterial | THREE.MeshStandardMaterial;
   gatlingBarrel?: THREE.Object3D;
   sawBlade?: THREE.Object3D;
   sniperLaser?: THREE.Mesh;

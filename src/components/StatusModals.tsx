@@ -63,7 +63,7 @@ export const PauseModal: React.FC<PauseModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-labelledby="pause-title"
-        className="w-full max-w-md game-plaque tac-corners surface-grain p-6 sm:p-7 animate-panel-in max-h-[90vh] overflow-y-auto"
+        className="w-full max-w-md game-plaque p-6 sm:p-7 animate-panel-in max-h-[90vh] overflow-y-auto"
       >
         <div className="flex items-end justify-between gap-3 pb-4 mb-5 border-b border-white/[0.09]">
           <div>
@@ -199,7 +199,7 @@ export const PauseModal: React.FC<PauseModalProps> = ({
             {CONTROL_ITEMS.map((item) => (
               <div
                 key={item.keys}
-                className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-[4px] bg-white/[0.03] border border-white/[0.07]"
+                className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.08]"
               >
                 <span className="text-[11px] text-[#d5deea] truncate">{item.label}</span>
                 <Keycap size="xs" tone={item.tone}>
@@ -261,8 +261,7 @@ export const DeathModal: React.FC<DeathModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-labelledby="kia-title"
-        className="w-full max-w-xl game-plaque tac-corners surface-grain p-6 sm:p-8 animate-panel-in"
-        style={{ borderTop: '2px solid rgba(255, 68, 34, 0.8)' }}
+        className="w-full max-w-xl game-plaque p-6 sm:p-8 animate-panel-in"
       >
         <div className="flex items-center justify-between gap-4 pb-5 border-b border-white/[0.09]">
           <div>
@@ -312,8 +311,7 @@ export const DeathModal: React.FC<DeathModalProps> = ({
           ].map((stat) => (
             <div
               key={stat.label}
-              className="px-3 py-2.5 rounded-[4px] bg-white/[0.03] border border-white/[0.08]"
-              style={{ borderTop: `2px solid ${stat.color}99` }}
+              className="px-3.5 py-3 rounded-xl bg-white/[0.04] border border-white/[0.08]"
             >
               <div className="text-[9.5px] font-tactical text-[#8c9ab0] uppercase">{stat.label}</div>
               <div
@@ -387,10 +385,10 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-labelledby="victory-title"
-        className="w-full max-w-3xl game-plaque tac-corners surface-grain overflow-hidden animate-credits-in max-h-[92vh] overflow-y-auto"
+        className="w-full max-w-3xl game-plaque overflow-hidden animate-credits-in max-h-[92vh] overflow-y-auto"
         style={{
-          borderColor: `${ending.accentCss}66`,
-          boxShadow: `0 32px 72px -16px rgba(0,0,0,0.92), 0 0 42px -18px ${ending.accentCss}66`,
+          borderColor: `${ending.accentCss}55`,
+          boxShadow: `0 32px 72px -16px rgba(0,0,0,0.9), 0 0 42px -18px ${ending.accentCss}55`,
         }}
       >
         {/* Full-Bleed Ending Key Art Banner */}
@@ -429,7 +427,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
         <div className="p-6 sm:p-7">
           {hud.autoEndingReason && (
             <div
-              className="mb-4 px-3.5 py-2.5 rounded-[4px] bg-white/[0.04] border-l-2 text-xs text-[#e2e8f0] leading-snug break-keep"
+              className="mb-4 px-4 py-3 rounded-xl bg-white/[0.04] border-l-2 text-xs text-[#e2e8f0] leading-snug break-keep"
               style={{ borderLeftColor: ending.accentCss }}
               data-testid="victory-auto-ending-reason"
             >
@@ -450,25 +448,25 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 py-4 border-b border-white/[0.09] tabular-nums">
-            <div className="px-3 py-2 rounded-[4px] bg-white/[0.03] border border-white/[0.08]">
+            <div className="px-3.5 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08]">
               <div className="text-[9.5px] font-tactical text-[#8c9ab0] uppercase">생존 시간</div>
               <div className="font-display text-2xl font-bold text-[#f8fafc] mt-0.5 leading-none">
                 {formatClock(hud.survivalTime)}
               </div>
             </div>
-            <div className="px-3 py-2 rounded-[4px] bg-white/[0.03] border border-white/[0.08]">
+            <div className="px-3.5 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08]">
               <div className="text-[9.5px] font-tactical text-[#8c9ab0] uppercase">AI 처치</div>
               <div className="font-display text-2xl font-bold text-[#38d9ff] mt-0.5 leading-none">
                 {hud.kills}
               </div>
             </div>
-            <div className="px-3 py-2 rounded-[4px] bg-white/[0.03] border border-white/[0.08]">
+            <div className="px-3.5 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08]">
               <div className="text-[9.5px] font-tactical text-[#8c9ab0] uppercase">부위 파괴</div>
               <div className="font-display text-2xl font-bold text-[#f5b342] mt-0.5 leading-none">
                 {hud.dismembers}
               </div>
             </div>
-            <div className="px-3 py-2 rounded-[4px] bg-white/[0.03] border border-white/[0.08]">
+            <div className="px-3.5 py-2.5 rounded-xl bg-white/[0.04] border border-white/[0.08]">
               <div className="text-[9.5px] font-tactical text-[#8c9ab0] uppercase">진실 해금률</div>
               <div
                 className="font-display text-2xl font-bold text-[#2ee6a6] mt-0.5 leading-none"
@@ -500,12 +498,12 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
                     type="button"
                     disabled={!unlocked}
                     onClick={() => setSelectedTapeId(active ? null : tape.id)}
-                    className={`px-3 py-2 rounded-[4px] flex items-center justify-between gap-2 text-left transition-colors ${
+                    className={`px-3 py-2.5 rounded-xl flex items-center justify-between gap-2 text-left transition-colors ${
                       unlocked
                         ? active
                           ? 'bg-[#f5b342]/24 border border-[#f5b342]/80 text-[#fff6dc] cursor-pointer'
                           : 'bg-[#f5b342]/10 hover:bg-[#f5b342]/18 border border-[#f5b342]/35 text-[#fde6b8] cursor-pointer'
-                        : 'bg-white/[0.02] border border-white/[0.06] text-[#7c889c] cursor-default'
+                        : 'bg-white/[0.03] border border-white/[0.07] text-[#7c889c] cursor-default'
                     }`}
                   >
                     <span className="truncate">
@@ -524,7 +522,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
             </div>
 
             {selectedTape && (
-              <div className="mt-2.5 p-3 rounded-[4px] bg-[#070b14]/90 border border-[#f5b342]/45 text-xs animate-panel-in">
+              <div className="mt-2.5 p-3.5 rounded-xl bg-[#070b14]/88 border border-[#f5b342]/40 text-xs animate-panel-in">
                 <div className="flex items-center justify-between text-[10px] font-tactical text-[#f6b75e] mb-1">
                   <span>
                     {selectedTape.code} · {selectedTape.title}

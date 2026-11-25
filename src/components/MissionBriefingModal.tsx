@@ -88,15 +88,12 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center p-3 sm:p-5 bg-[#05070c]/88 backdrop-blur-md animate-panel-in overflow-y-auto"
+      className="fixed inset-0 z-40 flex items-center justify-center p-3 sm:p-5 bg-[#05080f]/82 backdrop-blur-xl animate-panel-in overflow-y-auto"
       data-testid="mission-briefing-modal"
     >
-      <div
-        className="relative my-auto w-full max-w-4xl max-h-[95vh] overflow-y-auto rounded-[6px] border border-white/15 bg-[#0a0f18]/96 shadow-[0_32px_90px_rgba(0,0,0,0.92)]"
-        style={{ borderTop: `3px solid ${mission.accentCss}` }}
-      >
-        {/* Full-Bleed Cinematic Mission Key Art Header */}
-        <div className="relative h-36 sm:h-44 w-full overflow-hidden bg-[#060910]">
+      <div className="relative my-auto w-full max-w-4xl max-h-[95vh] overflow-y-auto rounded-[20px] border border-white/[0.12] bg-[#0c111c]/92 backdrop-blur-2xl shadow-[0_36px_100px_rgba(0,0,0,0.9)]">
+        {/* Full-Bleed Cinematic Mission Key Art Header (compact height so 1280x720 fits without scroll) */}
+        <div className="relative h-28 sm:h-32 w-full overflow-hidden bg-[#060910]">
           <img
             src={mission.keyArtUrl}
             alt={mission.title}
@@ -106,29 +103,29 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
             className="absolute inset-0"
             style={{
               background:
-                'linear-gradient(180deg, rgba(6,9,16,0.22) 0%, rgba(10,15,24,0.68) 62%, rgba(10,15,24,1) 100%)',
+                'linear-gradient(180deg, rgba(6,9,16,0.18) 0%, rgba(12,17,28,0.68) 62%, rgba(12,17,28,1) 100%)',
             }}
           />
-          <div className="absolute top-3 left-5 right-5 flex items-center justify-between">
+          <div className="absolute top-3.5 left-5 right-5 flex items-center justify-between">
             <span
-              className="px-2.5 py-1 rounded-[3px] bg-black/70 border font-tactical text-[10px] font-bold tracking-[0.2em] uppercase"
-              style={{ borderColor: `${mission.accentCss}88`, color: mission.accentCss }}
+              className="px-3 py-1 rounded-full bg-black/55 backdrop-blur-md border border-white/15 font-tactical text-[10px] font-semibold tracking-[0.16em] uppercase"
+              style={{ color: mission.accentCss }}
             >
               {mission.numberLabel} · {mission.code}
             </span>
             <button
               type="button"
               onClick={onClose}
-              className="px-2.5 py-1 rounded-[3px] bg-black/65 hover:bg-black/90 border border-white/15 text-[11px] font-tactical text-[#cbd5e1] cursor-pointer transition-colors"
+              className="px-3 py-1 rounded-full bg-black/55 hover:bg-white/15 backdrop-blur-md border border-white/15 text-[11px] font-medium text-[#e2e8f0] cursor-pointer transition-colors"
             >
               닫기 [ESC]
             </button>
           </div>
-          <div className="absolute bottom-3 left-5 right-5">
-            <div className="font-tactical text-[10.5px] tracking-[0.16em] text-[#cbd5e1] uppercase">
+          <div className="absolute bottom-3.5 left-5 right-5">
+            <div className="font-tactical text-[10.5px] tracking-[0.14em] text-[#cbd5e1]/90 uppercase">
               {mission.location}
             </div>
-            <h2 className="font-display text-2xl sm:text-3xl font-extrabold text-[#f8fafc] tracking-wide mt-0.5 game-text-outline">
+            <h2 className="text-2xl sm:text-3xl font-extrabold text-[#f8fafc] tracking-tight mt-0.5 game-text-outline">
               {mission.title}
             </h2>
           </div>
@@ -139,25 +136,25 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
           {/* Left 7 cols: Lore + Tactical Intel + Squad Roster */}
           <div className="lg:col-span-7 flex flex-col gap-3">
             <div>
-              <div className="text-[10px] font-tactical font-bold tracking-[0.18em] text-[#94a3b8] uppercase mb-1.5">
-                TACTICAL BRIEFING // 작전 개요
+              <div className="text-[10px] font-semibold tracking-[0.08em] text-[#94a3b8] uppercase mb-1">
+                작전 브리핑
               </div>
-              <p className="text-xs sm:text-[13.5px] text-[#e2e8f0] leading-relaxed break-keep">
+              <p className="text-xs sm:text-[13px] text-[#e2e8f0] leading-relaxed break-keep">
                 {mission.briefingLore}
               </p>
             </div>
 
-            <div className="rounded-[4px] bg-white/[0.03] border border-white/[0.08] p-3.5">
-              <div className="text-[10px] font-tactical font-bold tracking-[0.16em] text-[#f5b342] uppercase mb-2">
-                FIELD INTEL // 핵심 전술 지침
+            <div className="rounded-2xl bg-white/[0.04] border border-white/[0.08] p-3">
+              <div className="text-[10px] font-semibold tracking-[0.08em] text-[#f5b342] uppercase mb-1.5">
+                핵심 전술 지침
               </div>
-              <ul className="space-y-1.5">
+              <ul className="space-y-1">
                 {mission.tacticalTips.map((tip, idx) => (
                   <li
                     key={idx}
-                    className="flex items-start gap-2 text-xs text-[#cbd5e1] leading-snug break-keep"
+                    className="flex items-start gap-2 text-[11.5px] text-[#cbd5e1] leading-snug break-keep"
                   >
-                    <span className="mt-1 w-1.5 h-1.5 rounded-full bg-[#38d9ff] shrink-0" />
+                    <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[#38d9ff] shrink-0" />
                     <span>{tip}</span>
                   </li>
                 ))}
@@ -166,27 +163,26 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
 
             {/* Real Photorealistic Character Comms Roster */}
             <div>
-              <div className="text-[10px] font-tactical font-bold tracking-[0.16em] text-[#94a3b8] uppercase mb-2">
-                ASSIGNED COMMS CHANNELS // 작전 참여 인원
+              <div className="text-[10px] font-semibold tracking-[0.08em] text-[#94a3b8] uppercase mb-1.5">
+                작전 교신 채널
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {BRIEFING_ROSTER.map((member) => (
                   <div
                     key={member.name}
-                    className="flex items-center gap-2 p-1.5 rounded-[4px] bg-black/45 border border-white/[0.08]"
+                    className="flex items-center gap-2 p-2 rounded-xl bg-white/[0.035] border border-white/[0.07]"
                   >
                     <img
                       src={member.img}
                       alt={member.name}
-                      className="w-9 h-9 rounded-[3px] object-cover shrink-0 border"
-                      style={{ borderColor: `${member.accent}88` }}
+                      className="w-8 h-8 rounded-lg object-cover shrink-0 border border-white/15"
                     />
                     <div className="min-w-0">
-                      <div className="text-[11px] font-semibold text-[#f1f5f9] truncate">
+                      <div className="text-[11px] font-semibold text-[#f8fafc] truncate">
                         {member.name}
                       </div>
                       <div
-                        className="text-[9px] font-tactical truncate"
+                        className="text-[9.5px] font-medium truncate opacity-90"
                         style={{ color: member.accent }}
                       >
                         {member.role}
@@ -199,12 +195,12 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
           </div>
 
           {/* Right 5 cols: CoD Gunsmith-Lite Primary Weapon Attachment Loadout */}
-          <div className="lg:col-span-5 flex flex-col justify-between gap-3">
+          <div className="lg:col-span-5 flex flex-col justify-between gap-2.5">
             <div>
-              <div className="text-[10px] font-tactical font-bold tracking-[0.18em] text-[#38d9ff] uppercase mb-1.5">
-                GUNSMITH LOADOUT // 주무기 전술 부착물
+              <div className="text-[10px] font-semibold tracking-[0.08em] text-[#38d9ff] uppercase mb-1.5">
+                주무기 전술 부착물 (GUNSMITH)
               </div>
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 {WEAPON_ATTACHMENTS.map((att) => {
                   const selected = attachment === att.id;
                   return (
@@ -213,18 +209,18 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
                       type="button"
                       data-testid={`attachment-${att.id}`}
                       onClick={() => onSelectAttachment(att.id)}
-                      className={`w-full text-left px-3 py-2 rounded-[4px] border transition-all cursor-pointer ${
+                      className={`w-full text-left px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${
                         selected
-                          ? 'bg-[#38d9ff]/14 border-[#38d9ff]/80 shadow-[0_0_20px_rgba(56,217,255,0.16)]'
-                          : 'bg-black/40 border-white/10 hover:border-white/30'
+                          ? 'bg-white/[0.11] border-white/55 shadow-[0_8px_24px_rgba(0,0,0,0.38)]'
+                          : 'bg-white/[0.03] border-white/[0.08] hover:bg-white/[0.06] hover:border-white/25'
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-bold text-[#f8fafc]">{att.name}</span>
+                        <span className="text-[11.5px] font-semibold text-[#f8fafc]">{att.name}</span>
                         <span
-                          className={`px-1.5 py-0.5 rounded-[2px] text-[9px] font-tactical font-bold ${
+                          className={`px-2 py-0.5 rounded-full text-[8.5px] font-tactical font-bold ${
                             selected
-                              ? 'bg-[#38d9ff] text-[#05080f]'
+                              ? 'bg-white text-[#090d16]'
                               : 'bg-white/10 text-[#94a3b8]'
                           }`}
                         >
@@ -239,7 +235,7 @@ export const MissionBriefingModal: React.FC<MissionBriefingModalProps> = ({
 
               {/* CoD Gunsmith Live Weapon Telemetry Stat Bars */}
               <div
-                className="mt-2.5 p-2.5 rounded-[4px] bg-black/50 border border-white/[0.08] space-y-1.5"
+                className="mt-2 p-2.5 rounded-xl bg-white/[0.035] border border-white/[0.08] space-y-1.5"
                 data-testid="gunsmith-stat-bars"
               >
                 {statBars.map((st) => (

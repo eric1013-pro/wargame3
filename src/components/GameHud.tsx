@@ -208,11 +208,11 @@ export const GameHud: React.FC<GameHudProps> = ({
         className="fixed inset-0 z-10 pointer-events-none select-none font-tactical"
         data-testid="heli-gunner-hud"
       >
-        {/* Top-Left Aviation Telemetry (Crisp Glass Badge for readability over bright Neo-Seoul skyline) */}
-        <div className="fixed top-5 left-6 px-3.5 py-2.5 rounded-[5px] bg-[#060c16]/72 backdrop-blur-md border border-[#38d9ff]/30 flex flex-col gap-0.5 text-[11px] tracking-[0.15em] text-[#e2ecf8] tabular-nums shadow-lg">
+        {/* Top-Left Aviation Telemetry (Crisp Apple-Frosted Badge for readability over bright Neo-Seoul skyline) */}
+        <div className="fixed top-5 left-6 px-4 py-3 rounded-2xl bg-[#080d16]/72 backdrop-blur-2xl border border-white/[0.12] flex flex-col gap-0.5 text-[11px] tracking-[0.12em] text-[#e2ecf8] tabular-nums shadow-[0_14px_36px_rgba(0,0,0,0.5)]">
           <div className="font-bold text-[#38d9ff] flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-[#38d9ff] animate-pulse" />
-            <span>UH-60K SURION // DOOR GUNNER</span>
+            <span>UH-60K SURION · DOOR GUNNER</span>
           </div>
           <div className="text-[#dce6f4]">
             ALT {hud.heliRide.altitudeM}M · SPD {hud.heliRide.speedKts} KTS · PASS {hud.heliRide.progressPct}%
@@ -231,7 +231,7 @@ export const GameHud: React.FC<GameHudProps> = ({
               e.currentTarget.blur();
               onToggleMute();
             }}
-            className="px-2.5 py-1 rounded-[3px] bg-black/55 border border-white/25 text-[10px] text-white cursor-pointer hover:bg-black/80"
+            className="px-3 py-1.5 rounded-full bg-[#080d16]/68 backdrop-blur-xl border border-white/[0.14] text-[10px] text-white cursor-pointer hover:bg-white/[0.14] transition-colors"
           >
             {hud.muted ? 'MUTE' : 'SFX ON'}
           </button>
@@ -242,7 +242,7 @@ export const GameHud: React.FC<GameHudProps> = ({
               e.currentTarget.blur();
               onPause();
             }}
-            className="px-2.5 py-1 rounded-[3px] bg-black/55 border border-white/25 text-[10px] text-white cursor-pointer hover:bg-black/80"
+            className="px-3 py-1.5 rounded-full bg-[#080d16]/68 backdrop-blur-xl border border-white/[0.14] text-[10px] text-white cursor-pointer hover:bg-white/[0.14] transition-colors"
           >
             [ESC]
           </button>
@@ -342,7 +342,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                 e.currentTarget.blur();
                 onToggleAc130Thermal();
               }}
-              className="px-2.5 py-1 rounded-[2px] bg-black/55 border border-white/30 text-[10px] text-white cursor-pointer hover:bg-black/80"
+              className="px-3 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/25 text-[10px] text-white cursor-pointer hover:bg-black/80 transition-colors"
             >
               [T] {isBhot ? 'BHOT' : 'WHOT'}
             </button>
@@ -353,7 +353,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                 e.currentTarget.blur();
                 onPause();
               }}
-              className="px-2.5 py-1 rounded-[2px] bg-black/55 border border-white/30 text-[10px] text-white cursor-pointer hover:bg-black/80"
+              className="px-3 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/25 text-[10px] text-white cursor-pointer hover:bg-black/80 transition-colors"
             >
               [ESC]
             </button>
@@ -464,10 +464,10 @@ export const GameHud: React.FC<GameHudProps> = ({
                     e.currentTarget.blur();
                     onSelectAc130Weapon(w.idx);
                   }}
-                  className={`px-3 py-1.5 rounded-[2px] border text-left cursor-pointer transition-all ${
+                  className={`px-3.5 py-2 rounded-xl border text-left cursor-pointer transition-all backdrop-blur-md ${
                     active
-                      ? 'bg-white text-[#07090f] border-white font-extrabold'
-                      : 'bg-black/55 text-white/75 border-white/25 hover:border-white/60'
+                      ? 'bg-white text-[#07090f] border-white font-extrabold shadow-lg'
+                      : 'bg-black/55 text-white/75 border-white/20 hover:border-white/50'
                   }`}
                 >
                   <div className="text-[11px] leading-none">{w.label}</div>
@@ -1034,7 +1034,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                 e.currentTarget.blur();
                 onVatsTargetClick(t.unitId, t.part);
               }}
-              className="pointer-events-auto fixed -translate-x-1/2 -translate-y-1/2 px-3 py-1.5 rounded-[4px] bg-[#061811]/88 backdrop-blur-sm border border-[#2ee6a6]/65 hover:border-[#f5b342] text-left cursor-pointer transition-colors min-w-[128px]"
+              className="pointer-events-auto fixed -translate-x-1/2 -translate-y-1/2 px-3.5 py-2 rounded-xl bg-[#061811]/88 backdrop-blur-xl border border-[#2ee6a6]/55 hover:border-[#f5b342] text-left cursor-pointer transition-colors min-w-[132px] shadow-lg"
               style={{ left: `${t.screenX}px`, top: `${t.screenY}px` }}
             >
               <div className="text-[9.5px] font-tactical text-[#6ee7b7] leading-tight tabular-nums">
@@ -1075,24 +1075,24 @@ export const GameHud: React.FC<GameHudProps> = ({
         </div>
       )}
 
-      {/* Non-Blocking Diegetic Field Choice Bar (Mission 02 Survivor/Ghost-9 & Mission 04 Sergeant So Rescue Crisis) */}
+      {/* Non-Blocking Diegetic Field Choice Bar (Mission 02 Survivor/Ghost-9 & Mission 04 Rescue Crisis) */}
       {hud.campaignPrompt && !hud.vatsActive && (
         <div
-          className="fixed bottom-[17%] left-1/2 -translate-x-1/2 w-[min(92vw,560px)] px-4 py-3 rounded-[4px] bg-[#06090f]/82 backdrop-blur-md border-l-2 border-l-[#f5b342] pointer-events-auto animate-panel-in"
+          className="fixed bottom-[17%] left-1/2 -translate-x-1/2 w-[min(92vw,560px)] px-5 py-4 rounded-2xl bg-[#080d17]/84 backdrop-blur-2xl border border-white/[0.12] shadow-[0_24px_60px_rgba(0,0,0,0.72)] pointer-events-auto animate-panel-in"
           data-testid="campaign-choice-prompt"
         >
           <div className="flex items-center justify-between gap-2 text-[10px] font-tactical font-bold tracking-[0.16em] text-[#f5b342] uppercase">
             <span>{hud.campaignPrompt.title}</span>
             {hud.campaignPrompt.remainingSec !== null && (
-              <span className="text-[#ff523b] tabular-nums">
+              <span className="px-2 py-0.5 rounded-full bg-[#ff523b]/15 text-[#ff523b] tabular-nums">
                 {hud.campaignPrompt.remainingSec}s
               </span>
             )}
           </div>
-          <p className="text-xs text-[#e2e8f0] mt-1 mb-2.5 leading-snug break-keep">
+          <p className="text-xs text-[#e2e8f0] mt-1.5 mb-3 leading-snug break-keep">
             {hud.campaignPrompt.subtitle}
           </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             <button
               type="button"
               data-testid="campaign-choice-f"
@@ -1100,7 +1100,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                 e.currentTarget.blur();
                 onResolveCampaignChoice('F');
               }}
-              className="px-3 py-2 rounded-[3px] bg-[#0b2a22]/85 hover:bg-[#0f3d30] border border-[#2ee6a6]/65 text-left text-[11px] font-semibold text-[#e6fff6] cursor-pointer transition-colors"
+              className="px-3.5 py-2.5 rounded-xl bg-[#0b2a22]/85 hover:bg-[#0f3d30] border border-[#2ee6a6]/55 text-left text-[11px] font-semibold text-[#e6fff6] cursor-pointer transition-colors"
             >
               {hud.campaignPrompt.optionFLabel}
             </button>
@@ -1111,7 +1111,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                 e.currentTarget.blur();
                 onResolveCampaignChoice('G');
               }}
-              className="px-3 py-2 rounded-[3px] bg-[#2a120b]/85 hover:bg-[#3f1a0f] border border-[#ff6242]/65 text-left text-[11px] font-semibold text-[#ffece6] cursor-pointer transition-colors"
+              className="px-3.5 py-2.5 rounded-xl bg-[#2a120b]/85 hover:bg-[#3f1a0f] border border-[#ff6242]/55 text-left text-[11px] font-semibold text-[#ffece6] cursor-pointer transition-colors"
             >
               {hud.campaignPrompt.optionGLabel}
             </button>
@@ -1167,7 +1167,7 @@ export const GameHud: React.FC<GameHudProps> = ({
       {/* =====================================================================
           TOP LEFT — IMAGE-3 SUBTLE "체크포인트 도달" + FRAMELESS MISSION OBJECTIVE
           ===================================================================== */}
-      <div className="fixed top-4 left-5 max-w-[280px] flex flex-col gap-2">
+      <div className="fixed top-4 left-5 max-w-[235px] flex flex-col gap-2">
         {/* Image-3 Homage Subtle Top-Left Checkpoint Indicator */}
         {checkpointVisible && (
           <div
@@ -1182,12 +1182,12 @@ export const GameHud: React.FC<GameHudProps> = ({
         )}
 
         <div className="pl-3 border-l-2 border-l-[#f5b342]">
-          <div className="flex items-center gap-2 text-[10px] font-tactical tracking-[0.14em] uppercase game-text-outline">
-            <span className="text-[#f5b342] font-bold">
+          <div className="flex items-center gap-1.5 text-[10px] font-tactical tracking-[0.1em] uppercase game-text-outline">
+            <span className="text-[#f5b342] font-bold truncate">
               {hud.gameMode === 'freeroam' ? 'FREE ROAM' : hud.missionTitle}
             </span>
-            <span className="text-white/35">·</span>
-            <span className="text-[#e2e8f0] tabular-nums">{hud.objectiveProgressPct}%</span>
+            <span className="text-white/35 shrink-0">·</span>
+            <span className="text-[#e2e8f0] tabular-nums shrink-0">{hud.objectiveProgressPct}%</span>
           </div>
           <div className="text-xs sm:text-[13px] font-semibold text-[#f8fafc] mt-0.5 leading-snug break-keep game-text-outline">
             {hud.objectiveText}
@@ -1407,27 +1407,27 @@ export const GameHud: React.FC<GameHudProps> = ({
       </div>
 
       {/* =====================================================================
-          TOP RIGHT — PUBG Clean Kill/Threat Pill + Sleek Translucent Square Radar
+          TOP RIGHT — APPLE/TOSS × PUBG KILL PILL + TRANSLUCENT ROUNDED RADAR
           ===================================================================== */}
       <div className="fixed top-4 right-5 flex flex-col items-end gap-2">
-        {/* PUBG-Inspired Compact Score + Threat Stars + Unobtrusive Utility Icons */}
+        {/* Compact Score Pill + Threat Stars + Circular Utility Controls */}
         <div className="flex items-center gap-2 pointer-events-auto">
-          <div className="flex items-center bg-black/55 backdrop-blur-sm rounded-[3px] overflow-hidden border border-white/[0.1] text-[11px] font-tactical tabular-nums">
-            <span className="px-2 py-1 bg-white/[0.92] text-[#07090f] font-extrabold leading-none">
+          <div className="flex items-center bg-[#080d16]/68 backdrop-blur-xl rounded-full overflow-hidden border border-white/[0.11] text-[11px] font-tactical tabular-nums shadow-[0_6px_20px_rgba(0,0,0,0.35)]">
+            <span className="px-2.5 py-1 bg-white text-[#07090f] font-extrabold leading-none">
               {hud.kills}
             </span>
-            <span className="px-2 py-1 text-[#dce4ef] text-[10px] leading-none">처치</span>
+            <span className="px-2.5 py-1 text-[#dce4ef] text-[10px] leading-none">처치</span>
           </div>
 
           <div
-            className="flex items-center px-2 py-1 rounded-[3px] bg-black/50 backdrop-blur-sm border border-white/[0.08]"
+            className="flex items-center px-2.5 py-1 rounded-full bg-[#080d16]/62 backdrop-blur-xl border border-white/[0.1]"
             data-testid="hud-threat-stars"
             title={`OMNI 위협 등급 ★${hud.threatLevel} (${hud.threatLabel})`}
           >
             <ThreatStarRow level={hud.threatLevel} />
           </div>
 
-          <div className="flex items-center gap-1 opacity-65 hover:opacity-100 transition-opacity">
+          <div className="flex items-center gap-1.5 opacity-75 hover:opacity-100 transition-opacity">
             <button
               type="button"
               tabIndex={-1}
@@ -1436,7 +1436,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                 e.currentTarget.blur();
                 onToggleMute();
               }}
-              className="w-7 h-7 rounded-[3px] bg-black/45 hover:bg-black/75 border border-white/10 text-[#dce4ef] flex items-center justify-center cursor-pointer transition-colors"
+              className="w-7 h-7 rounded-full bg-[#080d16]/62 backdrop-blur-xl hover:bg-white/[0.14] border border-white/[0.12] text-[#dce4ef] flex items-center justify-center cursor-pointer transition-colors"
             >
               <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.9">
                 <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" fill="currentColor" fillOpacity="0.18" />
@@ -1458,7 +1458,7 @@ export const GameHud: React.FC<GameHudProps> = ({
                 e.currentTarget.blur();
                 onPause();
               }}
-              className="w-7 h-7 rounded-[3px] bg-black/45 hover:bg-black/75 border border-white/10 text-[#dce4ef] flex items-center justify-center cursor-pointer transition-colors"
+              className="w-7 h-7 rounded-full bg-[#080d16]/62 backdrop-blur-xl hover:bg-white/[0.14] border border-white/[0.12] text-[#dce4ef] flex items-center justify-center cursor-pointer transition-colors"
             >
               <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="currentColor">
                 <rect x="6.5" y="5" width="3.2" height="14" rx="1" />
@@ -1468,11 +1468,11 @@ export const GameHud: React.FC<GameHudProps> = ({
           </div>
         </div>
 
-        {/* Clean Translucent Minimal Square Radar (PUBG / CoD Style — Zero Bulky Plastic Frame) */}
+        {/* Clean Translucent Minimal Rounded Radar (Apple/PUBG Style) */}
         <div
-          className="relative w-[118px] h-[118px] rounded-[3px] overflow-hidden bg-[#05080f]/58 backdrop-blur-sm border transition-colors duration-300"
+          className="relative w-[120px] h-[120px] rounded-2xl overflow-hidden bg-[#060b14]/62 backdrop-blur-xl border shadow-[0_12px_32px_rgba(0,0,0,0.45)] transition-colors duration-300"
           style={{
-            borderColor: hud.threatLevel >= 4 ? 'rgba(255, 68, 34, 0.6)' : 'rgba(255, 255, 255, 0.14)',
+            borderColor: hud.threatLevel >= 4 ? 'rgba(255, 68, 34, 0.55)' : 'rgba(255, 255, 255, 0.13)',
           }}
           data-testid="hud-minimap"
           aria-label="실시간 전술 레이더"
@@ -1573,18 +1573,18 @@ export const GameHud: React.FC<GameHudProps> = ({
           </span>
         </div>
 
-        {/* Pure Frameless Killfeed */}
-        <div className="flex flex-col items-end gap-0.5 max-w-[280px]">
+        {/* Pure Frameless Killfeed (compact width so it never brushes center medals) */}
+        <div className="flex flex-col items-end gap-0.5 max-w-[218px]">
           {hud.killFeed.slice(0, 3).map((item) => {
             const kMeta = FACTION_META[item.killerFaction] ?? FACTION_META[-1];
             const vMeta = FACTION_META[item.victimFaction] ?? FACTION_META[3];
             return (
               <div
                 key={item.id}
-                className="text-[10px] font-medium whitespace-nowrap animate-kf-slide game-text-outline"
+                className="max-w-full truncate text-[9.5px] font-medium animate-kf-slide game-text-outline"
               >
                 <span style={{ color: kMeta.cssColor }}>{item.killerName}</span>
-                <span className="mx-1.5 font-tactical text-[#94a3b8] text-[9px]">[{item.tag}]</span>
+                <span className="mx-1 font-tactical text-[#94a3b8] text-[8.5px]">[{item.tag}]</span>
                 <span style={{ color: vMeta.cssColor }}>{item.victimName}</span>
               </div>
             );
@@ -1597,11 +1597,11 @@ export const GameHud: React.FC<GameHudProps> = ({
           ===================================================================== */}
       {tankDriving ? (
         <div
-          className="fixed bottom-5 left-6 flex items-center gap-3.5 px-3.5 py-2.5 rounded-[5px] bg-[#060d17]/76 backdrop-blur-md border border-[#38d9ff]/30 shadow-[0_12px_32px_rgba(0,0,0,0.65)] font-tactical"
+          className="fixed bottom-5 left-6 flex items-center gap-3.5 px-4 py-3 rounded-2xl bg-[#080d16]/74 backdrop-blur-2xl border border-white/[0.12] shadow-[0_16px_40px_rgba(0,0,0,0.55)] font-tactical"
           data-testid="tank-hull-hud"
         >
           {/* Battlefield-style Live Top-Down Hull vs Independent 360° Turret SVG Diagram */}
-          <div className="w-16 h-16 rounded-[4px] bg-[#06111a]/75 backdrop-blur-sm border border-[#38d9ff]/45 flex items-center justify-center">
+          <div className="w-16 h-16 rounded-xl bg-white/[0.04] border border-white/[0.1] flex items-center justify-center">
             <svg viewBox="0 0 64 64" className="w-14 h-14" aria-hidden="true">
               {/* Armored K2 Hull + Tracks (fixed upright representing tank chassis forward) */}
               <rect x="17" y="16" width="6" height="32" rx="1.5" fill="#475569" />
@@ -1616,59 +1616,59 @@ export const GameHud: React.FC<GameHudProps> = ({
             </svg>
           </div>
 
-          <div className="w-[210px] flex flex-col gap-1.5">
+          <div className="w-[214px] flex flex-col gap-1.5">
             <div className="flex items-baseline justify-between tabular-nums">
               <div className="flex items-baseline gap-1.5">
-                <span className="font-display text-4xl font-extrabold text-[#2ee6a6] leading-none game-text-outline">
+                <span className="font-display text-4xl font-extrabold text-[#2ee6a6] leading-none">
                   {hud.tank.hp}
                 </span>
-                <span className="text-[10px] text-white/60 game-text-outline">/ {hud.tank.maxHp}</span>
+                <span className="text-[10px] text-white/55">/ {hud.tank.maxHp}</span>
               </div>
-              <span className="text-xs font-bold text-[#38d9ff] game-text-outline">
+              <span className="text-xs font-bold text-[#38d9ff]">
                 {hud.tank.speedKmh} KM/H
               </span>
             </div>
-            <div className="w-full h-[6px] bg-black/60 rounded-full overflow-hidden">
+            <div className="w-full h-[6px] bg-white/[0.1] rounded-full overflow-hidden">
               <div
-                className="h-full bg-[#2ee6a6] transition-all duration-100"
+                className="h-full rounded-full bg-[#2ee6a6] transition-all duration-100"
                 style={{ width: `${Math.round((hud.tank.hp / Math.max(1, hud.tank.maxHp)) * 100)}%` }}
               />
             </div>
-            <div className="flex items-center gap-2 text-[9.5px] text-[#dce6f4] game-text-outline pt-0.5">
+            <div className="flex items-center gap-2 text-[9.5px] text-[#dce6f4] pt-0.5">
               <span>[H] 수리 ({hud.armorPlates})</span>
-              <span className="text-white/30">·</span>
+              <span className="text-white/25">·</span>
               <span className={hud.tank.apsReady ? 'text-[#38d9ff] font-bold' : 'text-white/45'}>
                 [B] IR연막 {hud.tank.apsReady ? 'RDY' : 'CD'}
               </span>
-              <span className="text-white/30">·</span>
+              <span className="text-white/25">·</span>
               <span className="text-[#f5b342] font-bold">[F] 하차</span>
             </div>
           </div>
         </div>
       ) : (
-        <div className="fixed bottom-5 left-6 w-[216px] flex flex-col gap-1.5">
+        <div className="fixed bottom-5 left-6 w-[238px] px-4 py-3 rounded-2xl bg-[#080d16]/54 backdrop-blur-xl border border-white/[0.09] shadow-[0_14px_36px_rgba(0,0,0,0.45)] flex flex-col gap-2">
           <div className="flex items-baseline justify-between tabular-nums">
             <div className="flex items-baseline gap-1.5">
               <span
-                className="font-display text-5xl font-extrabold leading-none game-text-outline"
+                className="font-display text-4xl font-extrabold leading-none"
                 style={{ color: hud.hp < 40 ? '#ff4b36' : '#ffffff' }}
                 data-testid="hud-hp"
               >
                 {hud.hp}
               </span>
-              <span className="font-tactical text-[10px] text-white/55 game-text-outline">
+              <span className="font-tactical text-[10px] text-white/50">
                 / {hud.maxHp}
               </span>
             </div>
 
-            <div className="flex items-center gap-1 text-[#38d9ff] game-text-outline">
+            <div className="flex items-center gap-1 text-[#38d9ff]">
               <HudGlyphIcon kind="armor" size={12} />
-              <span className="font-display text-2xl font-bold leading-none">{hud.armor}</span>
+              <span className="font-display text-xl font-bold leading-none">{hud.armor}</span>
             </div>
           </div>
 
-          {/* Overwatch-style Crisp Segmented Health Bar */}
-          <div className="relative w-full h-[7px] flex gap-[2px]">
+          {/* Crisp Rounded Segmented Health Bar (Apple/PUBG Minimalist) */}
+          <div className="relative w-full h-[6px] flex gap-[3px]">
             {Array.from({ length: 10 }).map((_, i) => {
               const segStart = i * 10;
               const fill = Math.max(0, Math.min(100, ((hpPct - segStart) / 10) * 100));
@@ -1676,15 +1676,14 @@ export const GameHud: React.FC<GameHudProps> = ({
               return (
                 <div
                   key={i}
-                  className="relative flex-1 h-full bg-black/50 overflow-hidden"
-                  style={{ transform: 'skewX(-14deg)' }}
+                  className="relative flex-1 h-full rounded-full bg-white/[0.12] overflow-hidden"
                 >
                   <div
-                    className="absolute inset-y-0 left-0 bg-[#f59e0b]/80 transition-all duration-300"
+                    className="absolute inset-y-0 left-0 rounded-full bg-[#f59e0b]/80 transition-all duration-300"
                     style={{ width: `${ghostFill}%` }}
                   />
                   <div
-                    className="absolute inset-y-0 left-0 transition-all duration-75"
+                    className="absolute inset-y-0 left-0 rounded-full transition-all duration-75"
                     style={{
                       width: `${fill}%`,
                       backgroundColor: hud.hp < 40 ? '#ff4422' : '#f8fafc',
@@ -1695,12 +1694,12 @@ export const GameHud: React.FC<GameHudProps> = ({
             })}
           </div>
 
-          {/* Slim Cyan Armor Bar */}
-          <div className="w-full h-[3px] bg-black/45 overflow-hidden" style={{ transform: 'skewX(-14deg)' }}>
-            <div className="h-full bg-[#38d9ff] transition-all duration-100" style={{ width: `${armorPct}%` }} />
+          {/* Smooth Pill Armor Bar */}
+          <div className="w-full h-[3.5px] rounded-full bg-white/[0.1] overflow-hidden">
+            <div className="h-full rounded-full bg-[#38d9ff] transition-all duration-100" style={{ width: `${armorPct}%` }} />
           </div>
 
-          {/* Minimal Exo-Dash [C] Pips */}
+          {/* Clean Exo-Dash [C] Pills */}
           <div className="flex items-center gap-2 pt-0.5">
             <Keycap size="xs" tone="cyan">
               C
@@ -1712,11 +1711,10 @@ export const GameHud: React.FC<GameHudProps> = ({
                 return (
                   <div
                     key={idx}
-                    className="h-[4px] w-11 bg-black/45 overflow-hidden"
-                    style={{ transform: 'skewX(-14deg)' }}
+                    className="h-[4px] flex-1 rounded-full bg-white/[0.12] overflow-hidden"
                   >
                     <div
-                      className="h-full transition-all duration-100"
+                      className="h-full rounded-full transition-all duration-100"
                       style={{
                         width: filled ? '100%' : charging ? `${hud.dashChargePct}%` : '0%',
                         backgroundColor: filled ? '#38d9ff' : 'rgba(56, 217, 255, 0.45)',
@@ -1726,38 +1724,38 @@ export const GameHud: React.FC<GameHudProps> = ({
                 );
               })}
             </div>
-            <span className="text-[9px] font-tactical text-white/65 tracking-wider game-text-outline">
+            <span className="text-[9px] font-tactical text-white/60 tracking-wider">
               {hud.isSliding ? 'SLIDE' : 'DASH'}
             </span>
           </div>
 
-          {/* Warzone Ceramic Armor Plate [H] + M18 Tactical Smoke [B] */}
-          <div className="flex items-center gap-2 pt-1 text-[9.5px] font-tactical">
-            <div className="flex items-center gap-1 text-[#38d9ff] game-text-outline">
+          {/* Ceramic Armor Plate [H] + M18 Tactical Smoke [B] */}
+          <div className="flex items-center justify-between gap-2 pt-0.5 border-t border-white/[0.07] text-[9.5px] font-tactical">
+            <div className="flex items-center gap-1.5 text-[#38d9ff]">
               <Keycap size="xs" tone="cyan">
                 H
               </Keycap>
               <span>방탄판 {hud.armorPlates}/{hud.maxArmorPlates}</span>
             </div>
-            <div className="flex items-center gap-1 text-[#cbd5e1] game-text-outline">
+            <div className="flex items-center gap-1.5 text-[#cbd5e1]">
               <Keycap size="xs">B</Keycap>
               <span>연막 {hud.smokeGrenades}</span>
             </div>
             {hud.inSmokeCover && (
-              <span className="px-1.5 py-0.5 rounded-[2px] bg-[#64748b]/45 border border-white/25 text-[8.5px] text-white font-bold">
-                연막 은폐
+              <span className="px-2 py-0.5 rounded-full bg-white/15 border border-white/25 text-[8.5px] text-white font-bold">
+                은폐
               </span>
             )}
           </div>
           {hud.platingActive && (
-            <div className="w-full flex flex-col gap-0.5 pt-0.5">
-              <div className="flex justify-between text-[9px] font-tactical text-[#38d9ff] game-text-outline">
+            <div className="w-full flex flex-col gap-0.5">
+              <div className="flex justify-between text-[9px] font-tactical text-[#38d9ff]">
                 <span>방탄판 교체 중...</span>
                 <span>{hud.platingPct}%</span>
               </div>
-              <div className="w-full h-[3px] bg-black/55 overflow-hidden">
+              <div className="w-full h-[3px] rounded-full bg-white/[0.12] overflow-hidden">
                 <div
-                  className="h-full bg-[#38d9ff] transition-all duration-75"
+                  className="h-full rounded-full bg-[#38d9ff] transition-all duration-75"
                   style={{ width: `${hud.platingPct}%` }}
                 />
               </div>
@@ -1771,22 +1769,22 @@ export const GameHud: React.FC<GameHudProps> = ({
           ===================================================================== */}
       {tankDriving ? (
         <div
-          className="fixed bottom-5 right-6 flex flex-col items-end gap-2 px-3.5 py-2.5 rounded-[5px] bg-[#060d17]/76 backdrop-blur-md border border-[#38d9ff]/30 shadow-[0_12px_32px_rgba(0,0,0,0.65)] font-tactical"
+          className="fixed bottom-5 right-6 flex flex-col items-end gap-2 px-4 py-3 rounded-2xl bg-[#080d16]/74 backdrop-blur-2xl border border-white/[0.12] shadow-[0_16px_40px_rgba(0,0,0,0.55)] font-tactical"
           data-testid="tank-weapon-hud"
         >
-          <div className="text-[10px] font-bold tracking-[0.18em] text-[#38d9ff] game-text-outline">
-            ROK K2-X BLACK PANTHER // MBT
+          <div className="text-[10px] font-bold tracking-[0.16em] text-[#38d9ff]">
+            ROK K2-X BLACK PANTHER · MBT
           </div>
-          <div className="flex flex-col items-end gap-1 w-52">
-            <div className="w-full flex justify-between text-[10.5px] game-text-outline">
+          <div className="flex flex-col items-end gap-1 w-56">
+            <div className="w-full flex justify-between text-[10.5px]">
               <span className="text-[#f8fafc] font-bold">[LMB] 120MM L/55 주포</span>
               <span className={hud.tank.cannonReloadPct >= 100 ? 'text-[#2ee6a6] font-bold' : 'text-[#f5b342]'}>
                 {hud.tank.cannonReloadPct >= 100 ? 'READY' : `${hud.tank.cannonReloadPct}%`}
               </span>
             </div>
-            <div className="w-full h-[5px] bg-black/60 overflow-hidden" style={{ transform: 'skewX(-14deg)' }}>
+            <div className="w-full h-[5px] rounded-full bg-white/[0.1] overflow-hidden">
               <div
-                className="h-full transition-all duration-75"
+                className="h-full rounded-full transition-all duration-75"
                 style={{
                   width: `${hud.tank.cannonReloadPct}%`,
                   backgroundColor: hud.tank.cannonReloadPct >= 100 ? '#2ee6a6' : '#f5b342',
@@ -1794,16 +1792,16 @@ export const GameHud: React.FC<GameHudProps> = ({
               />
             </div>
           </div>
-          <div className="flex flex-col items-end gap-1 w-52">
-            <div className="w-full flex justify-between text-[10px] game-text-outline">
+          <div className="flex flex-col items-end gap-1 w-56">
+            <div className="w-full flex justify-between text-[10px]">
               <span className="text-[#dce6f4]">[SPACE] 12.7MM 동축 기관총</span>
               <span className={hud.tank.coaxHeatPct > 75 ? 'text-[#ff4b36] font-bold' : 'text-[#38d9ff]'}>
                 HEAT {hud.tank.coaxHeatPct}%
               </span>
             </div>
-            <div className="w-full h-[4px] bg-black/60 overflow-hidden" style={{ transform: 'skewX(-14deg)' }}>
+            <div className="w-full h-[4px] rounded-full bg-white/[0.1] overflow-hidden">
               <div
-                className="h-full transition-all duration-75"
+                className="h-full rounded-full transition-all duration-75"
                 style={{
                   width: `${hud.tank.coaxHeatPct}%`,
                   backgroundColor: hud.tank.coaxHeatPct > 75 ? '#ff4b36' : '#38d9ff',
@@ -1811,13 +1809,13 @@ export const GameHud: React.FC<GameHudProps> = ({
               />
             </div>
           </div>
-          <div className="text-[9.5px] text-white/75 game-text-outline">
+          <div className="text-[9.5px] text-white/65">
             [WASD] 차체 주행 · [마우스] 360° 포탑 · [RMB] 열화상 조준경
           </div>
         </div>
       ) : (
-        <div className="fixed bottom-5 right-6 flex flex-col items-end gap-2.5">
-        {/* Row 1: Compact Overwatch Ability Icon Squares ([Q] [V] [X] [G]) */}
+        <div className="fixed bottom-5 right-6 flex flex-col items-end gap-2">
+        {/* Row 1: Apple-Frosted Tactical Ability Pills ([Q] [V] [X] [G]) */}
         <div className="flex items-center gap-2">
           {[
             {
@@ -1859,18 +1857,18 @@ export const GameHud: React.FC<GameHudProps> = ({
           ].map((ab) => (
             <div key={ab.key} className="flex flex-col items-center gap-1">
               <div
-                className={`relative w-10 h-9 rounded-[4px] overflow-hidden bg-black/50 backdrop-blur-sm border flex flex-col items-center justify-center transition-all ${
+                className={`relative w-11 h-10 rounded-xl overflow-hidden bg-[#080d16]/62 backdrop-blur-xl border flex flex-col items-center justify-center transition-all ${
                   ab.active ? 'animate-ready-pulse' : ''
                 }`}
                 style={{
-                  borderColor: ab.ready ? `${ab.color}88` : 'rgba(255,255,255,0.14)',
+                  borderColor: ab.ready ? `${ab.color}66` : 'rgba(255,255,255,0.1)',
                 }}
               >
                 <div
                   className="absolute bottom-0 inset-x-0 transition-all duration-150"
                   style={{
                     height: `${ab.pct}%`,
-                    backgroundColor: `${ab.color}24`,
+                    backgroundColor: `${ab.color}22`,
                   }}
                 />
                 <span
@@ -1888,87 +1886,87 @@ export const GameHud: React.FC<GameHudProps> = ({
           ))}
         </div>
 
-        {/* Row 2: Frameless CoD / Overwatch Giant Hero Ammo Readout */}
-        <div className="flex flex-col items-end" data-testid="hud-ammo">
-          <span className="text-[10.5px] font-tactical font-semibold tracking-wider text-white/75 game-text-outline">
-            {currentWeapon.name}
-          </span>
-          <div className="flex items-baseline gap-1.5 tabular-nums leading-none mt-0.5">
-            {hud.reloading ? (
-              <span
-                className="font-display text-4xl font-extrabold game-text-outline"
-                style={{ color: hud.reloadIsTactical ? '#38d9ff' : hud.reloadAccentCss }}
-              >
-                {hud.reloadPct}%
-              </span>
-            ) : (
-              <>
+        {/* Row 2 + 3: Apple/Toss × CoD Minimalist Frosted Arsenal Dock */}
+        <div
+          className="px-4 py-3 rounded-2xl bg-[#080d16]/54 backdrop-blur-xl border border-white/[0.09] shadow-[0_14px_36px_rgba(0,0,0,0.45)] flex flex-col items-end gap-2"
+          data-testid="hud-ammo"
+        >
+          <div className="w-full flex items-end justify-between gap-4">
+            <span className="text-[10.5px] font-tactical font-semibold tracking-wide text-white/75 truncate max-w-[130px]">
+              {currentWeapon.name}
+            </span>
+            <div className="flex items-baseline gap-1 tabular-nums leading-none">
+              {hud.reloading ? (
                 <span
-                  className="font-display text-5xl font-extrabold game-text-outline transition-colors"
-                  style={{ color: ammoGauge.lowAmmoAlert ? '#ff4b36' : '#ffffff' }}
+                  className="font-display text-3xl font-extrabold"
+                  style={{ color: hud.reloadIsTactical ? '#38d9ff' : hud.reloadAccentCss }}
                 >
-                  {hud.ammo}
+                  {hud.reloadPct}%
                 </span>
-                <span className="font-display text-xl font-semibold text-white/50 game-text-outline">
-                  / {hud.mag}
-                </span>
-              </>
-            )}
+              ) : (
+                <>
+                  <span
+                    className="font-display text-4xl font-extrabold transition-colors"
+                    style={{ color: ammoGauge.lowAmmoAlert ? '#ff4b36' : '#ffffff' }}
+                  >
+                    {hud.ammo}
+                  </span>
+                  <span className="font-display text-lg font-semibold text-white/45">
+                    / {hud.mag}
+                  </span>
+                </>
+              )}
+            </div>
           </div>
-          {/* Razor-thin 3px weapon-colored ammo bar */}
+
+          {/* Smooth Pill Weapon-Colored Ammo Bar */}
           <div
-            className="w-44 h-[3px] bg-black/50 mt-1.5 overflow-hidden"
-            style={{ transform: 'skewX(-14deg)' }}
+            className="w-full h-[3.5px] rounded-full bg-white/[0.1] overflow-hidden"
             data-testid="hud-ammo-gauge"
             data-ammo-status={ammoGauge.status}
             data-ammo-pct={ammoGauge.fillPct}
           >
             <div
-              className="h-full transition-all duration-100"
+              className="h-full rounded-full transition-all duration-100"
               style={{
                 width: `${ammoGauge.fillPct}%`,
                 backgroundColor: ammoGauge.lowAmmoAlert ? '#ff4b36' : activeWeaponAccent,
               }}
             />
           </div>
-        </div>
 
-        {/* Row 3: Whisper-Minimal Frameless 6-Weapon Micro Selector */}
-        <div className="flex items-center gap-1.5 pointer-events-auto">
-          {WEAPONS.map((w, idx) => {
-            const active = hud.weaponIdx === idx;
-            const accent = WEAPON_ACCENTS[idx] ?? '#f5b342';
-            return (
-              <button
-                key={w.id}
-                type="button"
-                tabIndex={-1}
-                onClick={(e) => {
-                  e.currentTarget.blur();
-                  onSelectWeapon(idx);
-                }}
-                title={`[${w.slotKey}] ${w.name}`}
-                className={`relative flex flex-col items-center px-1.5 py-1 transition-all duration-150 cursor-pointer ${
-                  active ? 'opacity-100 -translate-y-0.5' : 'opacity-42 hover:opacity-85'
-                }`}
-              >
-                <WeaponSvgIcon weaponIdx={idx} accent={active ? accent : '#cbd5e1'} active={active} />
-                <span
-                  className="text-[8.5px] font-tactical font-bold leading-none mt-0.5 tabular-nums game-text-outline"
-                  style={{ color: active ? accent : '#cbd5e1' }}
-                >
-                  {w.slotKey}
-                </span>
-                <span
-                  className="mt-1 w-full h-[2px] rounded-full transition-all duration-150"
-                  style={{
-                    backgroundColor: accent,
-                    opacity: active ? 1 : 0,
+          {/* Compact 6-Weapon Selector Strip */}
+          <div className="flex items-center gap-1 pt-0.5 pointer-events-auto">
+            {WEAPONS.map((w, idx) => {
+              const active = hud.weaponIdx === idx;
+              const accent = WEAPON_ACCENTS[idx] ?? '#f5b342';
+              return (
+                <button
+                  key={w.id}
+                  type="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onSelectWeapon(idx);
                   }}
-                />
-              </button>
-            );
-          })}
+                  title={`[${w.slotKey}] ${w.name}`}
+                  className={`relative flex flex-col items-center px-1.5 py-1 rounded-lg transition-all duration-150 cursor-pointer ${
+                    active
+                      ? 'bg-white/[0.12] opacity-100'
+                      : 'opacity-45 hover:opacity-85 hover:bg-white/[0.05]'
+                  }`}
+                >
+                  <WeaponSvgIcon weaponIdx={idx} accent={active ? accent : '#cbd5e1'} active={active} />
+                  <span
+                    className="text-[8.5px] font-tactical font-bold leading-none mt-0.5 tabular-nums"
+                    style={{ color: active ? accent : '#cbd5e1' }}
+                  >
+                    {w.slotKey}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
       )}

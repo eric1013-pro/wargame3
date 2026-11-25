@@ -21,6 +21,9 @@ export interface ExtendedPbrLibrary {
   sandbag: PbrChannelPack;
   seoulFacade: PbrChannelPack;
   seoulAsphalt: PbrChannelPack;
+  skyscraperGlass: PbrChannelPack;
+  seoulConcrete: PbrChannelPack;
+  carbonArmor: PbrChannelPack;
   k808Armor: PbrChannelPack;
   crosswalkTex: THREE.CanvasTexture;
   roadSlowTex: THREE.CanvasTexture;
@@ -140,6 +143,8 @@ function makePack(
   const normalMap = heightCanvasToNormalTexture(cH, normalStrength, repeat);
   const roughnessMap = wrapCanvasTex(cR, false, repeat, anisotropy);
   const aoMap = wrapCanvasTex(cO, false, repeat, anisotropy);
+  // Use UV channel 0 so AO maps render cleanly across ALL procedural & GLB meshes in Three.js r151+
+  aoMap.channel = 0;
   track(map);
   track(normalMap);
   track(roughnessMap);
@@ -153,20 +158,21 @@ export function createExtendedPbrLibrary(maxAnisotropy: number): ExtendedPbrLibr
     all.push(t);
   };
 
-  // Real photographic 4-channel PBR loader (loads AI-generated Albedo JPG + sharp-computed Normal/Roughness/AO PNGs)
+  // Real photographic 4-channel PBR loader (loads Albedo JPG + sharp-computed Normal/Roughness/AO PNGs)
   const texLoader = new THREE.TextureLoader();
   const loadPhotoPbrPack = (
     id: string,
     repeatX: number,
     repeatY: number
   ): PbrChannelPack => {
-    const cfg = (url: string, isColor: boolean): THREE.Texture => {
+    const cfg = (url: string, isColor: boolean, isAo = false): THREE.Texture => {
       const tex = texLoader.load(url);
       tex.colorSpace = isColor ? THREE.SRGBColorSpace : THREE.NoColorSpace;
       tex.wrapS = THREE.RepeatWrapping;
       tex.wrapT = THREE.RepeatWrapping;
       tex.repeat.set(repeatX, repeatY);
       tex.anisotropy = Math.min(8, maxAnisotropy);
+      if (isAo) tex.channel = 0;
       track(tex);
       return tex;
     };
@@ -174,92 +180,28 @@ export function createExtendedPbrLibrary(maxAnisotropy: number): ExtendedPbrLibr
       map: cfg(`./src/assets/textures/pbr_${id}.jpg`, true),
       normalMap: cfg(`./src/assets/textures/pbr_${id}_normal.png`, false),
       roughnessMap: cfg(`./src/assets/textures/pbr_${id}_roughness.png`, false),
-      aoMap: cfg(`./src/assets/textures/pbr_${id}_ao.png`, false),
+      aoMap: cfg(`./src/assets/textures/pbr_${id}_ao.png`, false, true),
     };
   };
 
   // 1) Real Photographic Gunmetal Armor Plate PBR (rivets, oil grime, brushed scratches)
   const gunmetal = loadPhotoPbrPack('military_gunmetal', 2, 2);
-  // Real Photographic Wet Cracked Seoul Asphalt PBR
-  const seoulAsphalt = loadPhotoPbrPack('seoul_asphalt_wet', 16, 16);
+  // Real Photographic Wet Cracked Seoul Asphalt PBR (sharp 40x40 street tiling for realistic wet puddles)
+  const seoulAsphalt = loadPhotoPbrPack('seoul_asphalt_wet', 40, 40);
   // Real Photographic ROK Special Forces Granite Digital Camo & Ballistic Cordura PBR
   const rokCamo = loadPhotoPbrPack('rok_tactical_camo', 2, 2);
   // Real Photographic Battle-Scarred Euljiro Concrete/Tile Commercial Facade PBR
   const seoulFacade = loadPhotoPbrPack('euljiro_facade', 2, 2);
   // Real Photographic Stitched Muddy Burlap Sandbag PBR
   const sandbag = loadPhotoPbrPack('sandbag_burlap', 2, 2);
+  // Real Photographic-Composite Seoul Glass Curtain-Wall Skyscraper Facade PBR
+  const skyscraperGlass = loadPhotoPbrPack('skyscraper_glass', 2, 4);
+  // Real Photographic-Composite Brutalist Korean Architectural Concrete PBR
+  const seoulConcrete = loadPhotoPbrPack('seoul_concrete', 2, 2);
+  // Real Photographic-Composite Military 2x2 Twill Carbon-Fiber & Ceramic Armor PBR
+  const carbonArmor = loadPhotoPbrPack('carbon_armor', 2, 2);
 
-  // Legacy procedural backup pack kept for fine ROK "필승" receiver engraving & glove palm detail
-  const _unusedGunmetal = makePack(
-    256,
-    2.4,
-    2,
-    maxAnisotropy,
-    (a, h, r, o, s) => {
-      a.fillStyle = '#252931';
-      a.fillRect(0, 0, s, s);
-      h.fillStyle = '#808080';
-      h.fillRect(0, 0, s, s);
-      r.fillStyle = '#686868';
-      r.fillRect(0, 0, s, s);
-      o.fillStyle = '#eaeaea';
-      o.fillRect(0, 0, s, s);
-
-      // Anisotropic machined brush lines + micro-scratches
-      for (let i = 0; i < 1400; i++) {
-        const x = (i * 53) % s;
-        const y = (i * 29) % s;
-        const len = 16 + (i % 38);
-        const shade = 34 + (i % 24);
-        a.fillStyle = `rgb(${shade},${shade + 3},${shade + 7})`;
-        a.fillRect(x, y, len, 1);
-        const hv = 112 + (i % 34);
-        h.fillStyle = `rgb(${hv},${hv},${hv})`;
-        h.fillRect(x, y, len, 1);
-        const rv = 70 + (i % 65);
-        r.fillStyle = `rgb(${rv},${rv},${rv})`;
-        r.fillRect(x, y, len, 1);
-      }
-
-      // Machined panel seams + hex bolts + crevice AO
-      for (const py of [64, 192]) {
-        a.fillStyle = '#14171c';
-        a.fillRect(0, py, s, 3);
-        h.fillStyle = '#202020';
-        h.fillRect(0, py, s, 3);
-        o.fillStyle = '#555555';
-        o.fillRect(0, py - 2, s, 7);
-        // Edge-wear metallic glint along seam lip
-        a.fillStyle = '#6d7785';
-        a.fillRect(0, py + 3, s, 1);
-        r.fillStyle = '#222222';
-        r.fillRect(0, py + 3, s, 2);
-      }
-
-      // Recessed machined Torx rivets
-      for (let rx = 28; rx < s; rx += 64) {
-        for (const ry of [32, 128, 224]) {
-          h.fillStyle = '#252525';
-          h.beginPath();
-          h.arc(rx, ry, 5.5, 0, Math.PI * 2);
-          h.fill();
-          h.fillStyle = '#c8c8c8';
-          h.beginPath();
-          h.arc(rx, ry, 3.6, 0, Math.PI * 2);
-          h.fill();
-          o.fillStyle = '#404040';
-          o.beginPath();
-          o.arc(rx, ry, 7, 0, Math.PI * 2);
-          o.fill();
-          a.fillStyle = '#3b424d';
-          a.beginPath();
-          a.arc(rx, ry, 3.8, 0, Math.PI * 2);
-          a.fill();
-        }
-      }
-    },
-    track
-  );
+  // 2) ROK Special Forces "필승" Engraved Receiver PBR (kept procedural for razor-sharp Hangul engraving)
 
   // 2) ROK Special Forces Engraved Rifle Receiver ("필승" Calligraphy + Selector Marks + Serial)
   const rokReceiver = makePack(
@@ -394,9 +336,6 @@ export function createExtendedPbrLibrary(maxAnisotropy: number): ExtendedPbrLibr
     },
     track
   );
-
-  // 4) Procedural fallback sandbag & facade replaced above by real photographic 4-channel PBR textures
-  void _unusedGunmetal;
 
   // 6) K-808 ROK Military Olive-Drab Chipped Armor PBR
   const k808Armor = makePack(
@@ -577,6 +516,9 @@ export function createExtendedPbrLibrary(maxAnisotropy: number): ExtendedPbrLibr
     sandbag,
     seoulFacade,
     seoulAsphalt,
+    skyscraperGlass,
+    seoulConcrete,
+    carbonArmor,
     k808Armor,
     crosswalkTex: makeCrosswalkTex(),
     roadSlowTex: makeRoadSlowTex(),

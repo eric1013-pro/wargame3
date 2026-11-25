@@ -55,12 +55,13 @@ function clamp01(v: number): number {
 
 function easeInOutCubic(t: number): number {
   const c = clamp01(t);
-  return c < 0.5 ? 4 * c * c * c : 1 - Math.pow(-2 * c + 2, 3) / 2;
+  // C2-continuous Quintic Smootherstep (zero acceleration jerk at camera rail transitions!)
+  return c * c * c * (c * (c * 6 - 15) + 10);
 }
 
 function easeOutCubic(t: number): number {
   const c = clamp01(t);
-  return 1 - Math.pow(1 - c, 3);
+  return 1 - Math.pow(1 - c, 3.2);
 }
 
 function lerp(a: number, b: number, t: number): number {
@@ -454,7 +455,7 @@ export class CinematicDirector {
               sender: 'valkyrie',
               callsignCode: 'VALK-01',
               accentCss: '#34d399',
-              text: '이안, 생체 신호 잡혔어! 북쪽 중앙 서버의 방어막을 유지하는 붉은 릴레이 3기를 파괴해 줘. 보급[V]과 폭격[X]은 내가 지원한다!',
+              text: '이안... 살아 있었구나. 궤도 소각까지 30분도 안 남았어. 북쪽 OMNI-CORE 방어막을 끊어야 이 도시와 우리 모두 살 수 있어.',
               duration: 6.4,
             },
           ],
@@ -582,7 +583,7 @@ export class CinematicDirector {
               sender: 'valkyrie',
               callsignCode: 'VALK-01',
               accentCss: '#34d399',
-              text: '이안, 연결됐어! 네가 살아 있었구나! 북쪽 중앙 서버 방어막을 유지하는 붉은 파일런 3기를 파괴해 줘. 보급[V]과 폭격[X]은 내가 지원한다!',
+              text: '이안, 심박 확인됐어... 서울이 잿더미가 된 날 이후 첫 생존 신호야. 북쪽 시타델로 밀고 들어가 줘—궤도 소각 명령을 막을 기회는 오늘 밤뿐이야.',
               duration: 6.4,
             },
           ],
@@ -748,29 +749,38 @@ export class CinematicDirector {
 
   public getCameraPose(): CameraRailPose {
     if (this.sequence === 'opening') {
-      const standT = easeInOutCubic((this.elapsed - 2.2) / 2.8);
-      const lookCitadelT = easeInOutCubic((this.elapsed - 2.6) / 2.4);
-      const settleT = easeInOutCubic((this.elapsed - 5.1) / 1.0);
+      const standT = easeInOutCubic((this.elapsed - 2.15) / 2.85);
+      const lookCitadelT = easeInOutCubic((this.elapsed - 2.55) / 2.45);
+      const settleT = easeInOutCubic((this.elapsed - 5.0) / 1.15);
+
+      // Subtle cinematic breath & organic camera weight (eliminates robotic linear slides)
+      const breathY = Math.sin(this.elapsed * 2.1) * 0.032 * (1 - settleT);
+      const breathX = Math.cos(this.elapsed * 1.4) * 0.025 * (1 - settleT);
 
       const startPos: Vec3Like = {
-        x: this.anchorPos.x - 0.35,
-        y: 0.42,
-        z: this.anchorPos.z + 0.65,
+        x: this.anchorPos.x - 0.32,
+        y: 0.46,
+        z: this.anchorPos.z + 0.62,
       };
-      const pos = lerpVec3(startPos, this.anchorPos, standT);
+      const basePos = lerpVec3(startPos, this.anchorPos, standT);
+      const pos: Vec3Like = {
+        x: basePos.x + breathX,
+        y: basePos.y + breathY,
+        z: basePos.z,
+      };
 
-      const lowLook: Vec3Like = { x: -4.5, y: 1.0, z: this.anchorPos.z - 12 };
-      const highLook: Vec3Like = { x: 0, y: 12.2, z: this.citadelPos.z };
+      const lowLook: Vec3Like = { x: -4.2, y: 1.05, z: this.anchorPos.z - 12 };
+      const highLook: Vec3Like = { x: 0, y: 12.6, z: this.citadelPos.z };
       const midLook = lerpVec3(lowLook, highLook, lookCitadelT);
       const finalLook = lerpVec3(
         midLook,
-        { x: this.anchorPos.x, y: 2.0, z: this.anchorPos.z - 25 },
+        { x: this.anchorPos.x, y: 1.95, z: this.anchorPos.z - 25 },
         settleT
       );
 
-      const rollRad = lerp(-0.35, 0, easeOutCubic((this.elapsed - 2.1) / 2.4));
-      const fov = lerp(66, 76, standT);
-      const weaponDrawProgress = clamp01((this.elapsed - 4.95) / 1.05);
+      const rollRad = lerp(-0.32, 0, easeInOutCubic((this.elapsed - 2.0) / 2.6));
+      const fov = lerp(65, 76, standT);
+      const weaponDrawProgress = easeInOutCubic((this.elapsed - 4.85) / 1.15);
 
       return {
         active: true,
@@ -778,7 +788,7 @@ export class CinematicDirector {
         lookAt: finalLook,
         rollRad,
         fov,
-        hideViewmodel: this.elapsed < 4.95,
+        hideViewmodel: this.elapsed < 4.85,
         weaponDrawProgress,
       };
     }
@@ -789,35 +799,32 @@ export class CinematicDirector {
         y: 6.4,
         z: this.focusPoint.z + 13.5,
       };
+      const holdEndPos: Vec3Like = {
+        x: targetPos.x - 3.8,
+        y: targetPos.y - 1.1,
+        z: targetPos.z - 1.5,
+      };
       const lookSky: Vec3Like = {
         x: this.focusPoint.x,
-        y: lerp(24, 2.6, easeOutCubic(this.elapsed / 1.15)),
+        y: lerp(24, 2.7, easeInOutCubic(this.elapsed / 1.2)),
         z: this.focusPoint.z,
       };
       let pos: Vec3Like;
       let look: Vec3Like;
       let fov: number;
-      if (this.elapsed < 0.85) {
-        const t = easeInOutCubic(this.elapsed / 0.85);
+      if (this.elapsed < 0.9) {
+        const t = easeInOutCubic(this.elapsed / 0.9);
         pos = lerpVec3(this.anchorPos, targetPos, t);
         look = lerpVec3(this.anchorLookAt, lookSky, t);
         fov = lerp(76, 56, t);
       } else if (this.elapsed < 2.65) {
-        const d = (this.elapsed - 0.85) / 1.8;
-        pos = {
-          x: targetPos.x - d * 3.8,
-          y: targetPos.y - d * 1.1,
-          z: targetPos.z - d * 1.5,
-        };
+        const d = easeInOutCubic((this.elapsed - 0.9) / 1.75);
+        pos = lerpVec3(targetPos, holdEndPos, d);
         look = { x: this.focusPoint.x, y: 2.8, z: this.focusPoint.z };
         fov = lerp(56, 52, d);
       } else {
         const ret = easeInOutCubic((this.elapsed - 2.65) / 0.95);
-        pos = lerpVec3(
-          { x: targetPos.x - 3.8, y: targetPos.y - 1.1, z: targetPos.z - 1.5 },
-          this.anchorPos,
-          ret
-        );
+        pos = lerpVec3(holdEndPos, this.anchorPos, ret);
         look = lerpVec3({ x: this.focusPoint.x, y: 2.8, z: this.focusPoint.z }, this.anchorLookAt, ret);
         fov = lerp(52, 76, ret);
       }
@@ -828,7 +835,7 @@ export class CinematicDirector {
         rollRad: 0,
         fov,
         hideViewmodel: this.elapsed < 3.05,
-        weaponDrawProgress: clamp01((this.elapsed - 3.05) / 0.55),
+        weaponDrawProgress: easeInOutCubic((this.elapsed - 3.05) / 0.55),
       };
     }
 
@@ -837,6 +844,11 @@ export class CinematicDirector {
         x: this.citadelPos.x + 11.5,
         y: 11.2,
         z: this.citadelPos.z + 27.5,
+      };
+      const holdEndPos: Vec3Like = {
+        x: focusPos.x - 4.5,
+        y: focusPos.y + 1.4,
+        z: focusPos.z - 3.5,
       };
       const focusTarget: Vec3Like = {
         x: this.citadelPos.x,
@@ -848,27 +860,18 @@ export class CinematicDirector {
       let look: Vec3Like;
       let fov: number;
 
-      if (this.elapsed < 1.1) {
-        const t = easeInOutCubic(this.elapsed / 1.1);
+      if (this.elapsed < 1.15) {
+        const t = easeInOutCubic(this.elapsed / 1.15);
         pos = lerpVec3(this.anchorPos, focusPos, t);
         look = lerpVec3(this.anchorLookAt, focusTarget, t);
         fov = lerp(76, 56, t);
       } else if (this.elapsed < 3.25) {
-        const drift = (this.elapsed - 1.1) / 2.15;
-        pos = {
-          x: focusPos.x - drift * 4.5,
-          y: focusPos.y + drift * 1.4,
-          z: focusPos.z - drift * 3.5,
-        };
+        const drift = easeInOutCubic((this.elapsed - 1.15) / 2.1);
+        pos = lerpVec3(focusPos, holdEndPos, drift);
         look = focusTarget;
         fov = lerp(56, 50, drift);
       } else {
         const retT = easeInOutCubic((this.elapsed - 3.25) / 1.15);
-        const holdEndPos = {
-          x: focusPos.x - 4.5,
-          y: focusPos.y + 1.4,
-          z: focusPos.z - 3.5,
-        };
         pos = lerpVec3(holdEndPos, this.anchorPos, retT);
         look = lerpVec3(focusTarget, this.anchorLookAt, retT);
         fov = lerp(50, 76, retT);
@@ -881,7 +884,7 @@ export class CinematicDirector {
         rollRad: 0,
         fov,
         hideViewmodel: this.elapsed < 3.7,
-        weaponDrawProgress: clamp01((this.elapsed - 3.7) / 0.7),
+        weaponDrawProgress: easeInOutCubic((this.elapsed - 3.7) / 0.7),
       };
     }
 
@@ -925,17 +928,17 @@ export class CinematicDirector {
         z: this.citadelPos.z + (isAscension ? 22.0 : 29.0),
       };
       const tPos = easeInOutCubic(this.elapsed / this.duration);
-      const pos =
-        this.elapsed < 1.1
-          ? lerpVec3(this.anchorPos, heroCamStart, easeOutCubic(this.elapsed / 1.1))
-          : lerpVec3(heroCamStart, heroCamEnd, tPos);
+      const blendIn = easeInOutCubic(this.elapsed / 1.35);
+      const cruisePos = lerpVec3(heroCamStart, heroCamEnd, tPos);
+      const pos = lerpVec3(this.anchorPos, cruisePos, blendIn);
 
-      const tiltT = easeInOutCubic((this.elapsed - 1.2) / 5.4);
-      const lookAt: Vec3Like = {
+      const tiltT = easeInOutCubic((this.elapsed - 1.0) / 5.6);
+      const targetLook: Vec3Like = {
         x: this.citadelPos.x,
-        y: lerp(15.0, isAscension ? 34.0 : 46.0, tiltT),
+        y: lerp(14.5, isAscension ? 34.0 : 46.0, tiltT),
         z: this.citadelPos.z - (isAscension ? 2 : 12),
       };
+      const lookAt = lerpVec3(this.anchorLookAt, targetLook, blendIn);
 
       return {
         active: true,
